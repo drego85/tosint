@@ -60,7 +60,7 @@ def main():
         try:
             telegram_get_chat_administrators = bot.get_chat_administrators(telegram_chat_id)
             if telegram_get_chat_administrators:
-                print("Users in the chat:")
+                print("Administrators in the chat:")
                 for user in telegram_get_chat_administrators:
                     print(user["user"])
         except:
