@@ -22,9 +22,13 @@ def main():
     if bot:
         try:
             telegram_get_me = bot.getMe()
-
             print("Bot First Name: " + str(telegram_get_me["first_name"]))
             print("Bot Username: " + str(telegram_get_me["username"]))
+            telegram_bot_user_id = telegram_get_me["id"]
+            print("Bot User ID: " + str(telegram_bot_user_id))
+            print("Bot Can Read Group Messages: " + str(telegram_get_me["can_read_all_group_messages"]))
+            telegram_get_chat_member = bot.get_chat_member(telegram_chat_id, telegram_bot_user_id)
+            print("Bot In The Chat Is An: " + telegram_get_chat_member["status"])
         except:
             pass
 
