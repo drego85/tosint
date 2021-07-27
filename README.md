@@ -21,6 +21,9 @@ Analysis of token: 15968583XX:XXXXXXX_WhUt9sarlxIPZRXXXXX and chat id: -10XXXXX8
 
 Bot First Name: siXXben
 Bot Username: simXXXXbot
+Bot User ID: 180XXZ1378
+Bot Can Read Group Messages: False
+Bot in the chat is an: member
 Chat Title: CaXXX
 Chat Type: channel
 Chat Invite Link: https://t.me/joinchat/wGM1_XXXXcU2Mzdk
