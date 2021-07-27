@@ -5,7 +5,8 @@ Tosint (Telegram OSINT) is a tools to extract information from telegram bots and
 Tosint allows you to extract the following information:
 
 * Bot information (First Name, Username, User ID, Status);
-* Chat information (Title, Type, Invite Link);
+* Chat information (Title, Type, ID, Username, Invite Link);
+* Create Invite Link;  
 * Updates (last messages sent in the chat);
 * Number of users in the chat;
 * Information about chat administrators.
@@ -26,8 +27,11 @@ Bot Can Read Group Messages: False
 Bot in the chat is an: member
 Chat Title: CaXXX
 Chat Type: channel
+Chat ID: -1001XXXX62846
+Chat Username: None
 Chat Invite Link: https://t.me/joinchat/wGM1_XXXXcU2Mzdk
 Chat Invite Link: https://t.me/joinchat/7hyptXXXXXg1MDI8
+Create Invite Link: https://t.me/joinchat/fJ-XXXXXpEA0YWVk
 Number of users in the chat: 3
 Administrators in the chat:
 {'id': 159XXX8335, 'is_bot': True, 'first_name': 'siXXben', 'username': 'simXXXXbot'}

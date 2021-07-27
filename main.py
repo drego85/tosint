@@ -36,13 +36,21 @@ def main():
             telegram_get_chat = bot.getChat(telegram_chat_id)
             print("Chat Title: " + str(telegram_get_chat["title"]))
             print("Chat Type: " + str(telegram_get_chat["type"]))
+            print("Chat ID: " + str(telegram_get_chat["id"]))
+            print("Chat Username: " + str(telegram_get_chat["username"]))
             print("Chat Invite Link: " + str(telegram_get_chat["invite_link"]))
         except:
             pass
 
         try:
-            telegram_chat_invite_link = bot.exportChatInviteLink(telegram_chat_id)
+            telegram_chat_invite_link = bot.export_chat_invite_link(telegram_chat_id)
             print("Chat Invite Link: " + str(telegram_chat_invite_link))
+        except:
+            pass
+
+        try:
+            telegram_chat_invite_link = bot.create_chat_invite_link(telegram_chat_id)
+            print("Create Invite Link: " + str(telegram_chat_invite_link["invite_link"]))
         except:
             pass
 
