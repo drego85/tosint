@@ -6,8 +6,7 @@ Tosint allows you to extract the following information:
 
 * Bot information (First Name, Username, User ID, Status);
 * Chat information (Title, Type, ID, Username, Invite Link);
-* Create Invite Link;  
-* Updates (last messages sent in the chat);
+* Invite Link;  
 * Number of users in the chat;
 * Information about chat administrators.
 
@@ -15,27 +14,28 @@ Tosint allows you to extract the following information:
 
 ```
 $ python3 main.py
-Telegram Token (bot1xxx): 15968583XX:XXXXXXX_WhUt9sarlxIPZRXXXXX
-Telegram Chat ID (-100xxx): -10XXXXX862846
+Telegram Token (bot1xxx): 562ZZZZ900:XXXXNj7_wIEi74GXXX90CIxACBIX_YYYYwI
+Telegram Chat ID (-100xxx): -1001XXXXXX196
 
-Analysis of token: 15968583XX:XXXXXXX_WhUt9sarlxIPZRXXXXX and chat id: -10XXXXX862846
+Analysis of token: 562ZZZZ900:XXXXNj7_wIEi74GXXX90CIxACBIX_YYYYwI and chat id: -1001XXXXXX196
 
-Bot First Name: siXXben
-Bot Username: simXXXXbot
-Bot User ID: 180XXZ1378
+Bot First Name: Over Security Bot
+Bot Username: over_security_bot
+Bot User ID: 56XXXXXX00
 Bot Can Read Group Messages: False
-Bot in the chat is an: member
-Chat Title: CaXXX
+Bot In The Chat Is An: administrator
+Chat Title: Over Security
 Chat Type: channel
-Chat ID: -1001XXXX62846
-Chat Username: None
-Chat Invite Link: https://t.me/joinchat/wGM1_XXXXcU2Mzdk
-Chat Invite Link: https://t.me/joinchat/7hyptXXXXXg1MDI8
-Create Invite Link: https://t.me/joinchat/fJ-XXXXXpEA0YWVk
-Number of users in the chat: 3
+Chat ID: -100XXXXXX3196
+Chat has Visible History: True
+Chat Username: OverSecurity
+Chat Invite Link: https://t.me/+VmWXXXXXXHI1MTM0
+Chat Invite Link (exported): https://t.me/+AqcXXXXXXGJmZjk0
+Chat Invite Link (created): https://t.me/+LCsXXXXXXMgyYTg0
+Number of users in the chat: 286
 Administrators in the chat:
-{'id': 159XXX8335, 'is_bot': True, 'first_name': 'siXXben', 'username': 'simXXXXbot'}
-{'id': 919XXX436, 'is_bot': False, 'first_name': 'SXXXi', 'last_name': 'VXXX', 'language_code': 'ar', 'username': 'SimXXXX201'}
+{'id': 56XXXXXX00, 'is_bot': True, 'first_name': 'Over Security Bot', 'username': 'over_security_bot'}
+{'id': 20XXXX39, 'is_bot': False, 'first_name': 'Andrea', 'last_name': 'Draghetti', 'username': 'AndreaDraghetti'}
 ```
 
 ### License
