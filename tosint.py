@@ -34,7 +34,7 @@ def main():
     if "title" in telegram_get_chat: print("Chat Title: " + str(telegram_get_chat["title"]))
     print("Chat Type: " + str(telegram_get_chat["type"]))
     print("Chat ID: " + str(telegram_get_chat["id"]))
-    print("Chat has Visible History: " + str(telegram_get_chat["has_visible_history"]))
+    if "has_visible_history" in telegram_get_chat: print("Chat has Visible History: " + str(telegram_get_chat["has_visible_history"]))
     if "username" in telegram_get_chat: print("Chat Username: " + str(telegram_get_chat["username"]))
     if "invite_link" in telegram_get_chat: print("Chat Invite Link: " + str(telegram_get_chat["invite_link"]))
 
