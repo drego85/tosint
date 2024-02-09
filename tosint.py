@@ -53,7 +53,7 @@ def main():
     response = requests.get(url)
     telegram_chat_invite_link = response.json().get("result")
 
-    print("Chat Invite Link (created): " + str(telegram_chat_invite_link["invite_link"]))
+    if "invite_link" in telegram_get_chat: print("Chat Invite Link (created): " + str(telegram_chat_invite_link["invite_link"]))
 
     # Get Chat Member Count
 
