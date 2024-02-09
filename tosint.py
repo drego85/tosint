@@ -31,7 +31,7 @@ def main():
     response = requests.get(url)
     telegram_get_chat = response.json().get("result")
 
-    print("Chat Title: " + str(telegram_get_chat["title"]))
+    if "title" in telegram_get_chat: print("Chat Title: " + str(telegram_get_chat["title"]))
     print("Chat Type: " + str(telegram_get_chat["type"]))
     print("Chat ID: " + str(telegram_get_chat["id"]))
     print("Chat has Visible History: " + str(telegram_get_chat["has_visible_history"]))
