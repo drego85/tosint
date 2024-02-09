@@ -13,7 +13,7 @@ Tosint allows you to extract the following information:
 ### Example
 
 ```
-$ python3 main.py
+$ python3 tosint.py
 Telegram Token (bot1xxx): 562ZZZZ900:XXXXNj7_wIEi74GXXX90CIxACBIX_YYYYwI
 Telegram Chat ID (-100xxx): -1001XXXXXX196
 
