@@ -15,65 +15,68 @@ def main():
     url = f"https://api.telegram.org/bot{telegram_token}/getMe"
     response = requests.get(url)
     telegram_get_me = response.json().get("result")
+
+    if telegram_get_me:
        
-    print("Bot First Name: " + str(telegram_get_me["first_name"]))
-    print("Bot Username: " + str(telegram_get_me["username"]))
-    print("Bot User ID: " + str(telegram_get_me["id"]))
-    print("Bot Can Read Group Messages: " + str(telegram_get_me["can_read_all_group_messages"]))
-    url = f"https://api.telegram.org/bot{telegram_token}/getChatMember?chat_id={telegram_chat_id}&user_id={telegram_get_me['id']}"
-    response = requests.get(url)
-    telegram_get_chat_member = response.json().get("result")
-    print("Bot In The Chat Is An: " + telegram_get_chat_member["status"])
+        print("Bot First Name: " + str(telegram_get_me["first_name"]))
+        print("Bot Username: " + str(telegram_get_me["username"]))
+        print("Bot User ID: " + str(telegram_get_me["id"]))
+        print("Bot Can Read Group Messages: " + str(telegram_get_me["can_read_all_group_messages"]))
+        url = f"https://api.telegram.org/bot{telegram_token}/getChatMember?chat_id={telegram_chat_id}&user_id={telegram_get_me['id']}"
+        response = requests.get(url)
+        telegram_get_chat_member = response.json().get("result")
+        print("Bot In The Chat Is An: " + telegram_get_chat_member["status"])
 
-    # Get Chat Info
+        # Get Chat Info
 
-    url = f"https://api.telegram.org/bot{telegram_token}/getChat?chat_id={telegram_chat_id}"
-    response = requests.get(url)
-    telegram_get_chat = response.json().get("result")
+        url = f"https://api.telegram.org/bot{telegram_token}/getChat?chat_id={telegram_chat_id}"
+        response = requests.get(url)
+        telegram_get_chat = response.json().get("result")
 
-    if "title" in telegram_get_chat: print("Chat Title: " + str(telegram_get_chat["title"]))
-    print("Chat Type: " + str(telegram_get_chat["type"]))
-    print("Chat ID: " + str(telegram_get_chat["id"]))
-    if "has_visible_history" in telegram_get_chat: print("Chat has Visible History: " + str(telegram_get_chat["has_visible_history"]))
-    if "username" in telegram_get_chat: print("Chat Username: " + str(telegram_get_chat["username"]))
-    if "invite_link" in telegram_get_chat: print("Chat Invite Link: " + str(telegram_get_chat["invite_link"]))
+        if "title" in telegram_get_chat: print("Chat Title: " + str(telegram_get_chat["title"]))
+        print("Chat Type: " + str(telegram_get_chat["type"]))
+        print("Chat ID: " + str(telegram_get_chat["id"]))
+        if "has_visible_history" in telegram_get_chat: print("Chat has Visible History: " + str(telegram_get_chat["has_visible_history"]))
+        if "username" in telegram_get_chat: print("Chat Username: " + str(telegram_get_chat["username"]))
+        if "invite_link" in telegram_get_chat: print("Chat Invite Link: " + str(telegram_get_chat["invite_link"]))
 
 
-    # Export Chat Invite Link
+        # Export Chat Invite Link
 
-    url = f"https://api.telegram.org/bot{telegram_token}/exportChatInviteLink?chat_id={telegram_chat_id}"
-    response = requests.get(url)
-    telegram_chat_invite_link = response.json().get("result")
+        url = f"https://api.telegram.org/bot{telegram_token}/exportChatInviteLink?chat_id={telegram_chat_id}"
+        response = requests.get(url)
+        telegram_chat_invite_link = response.json().get("result")
 
-    print("Chat Invite Link (exported): " + str(telegram_chat_invite_link))
+        print("Chat Invite Link (exported): " + str(telegram_chat_invite_link))
 
-    # Create Chat Invite Link
+        # Create Chat Invite Link
 
-    url = f"https://api.telegram.org/bot{telegram_token}/createChatInviteLink?chat_id={telegram_chat_id}"
-    response = requests.get(url)
-    telegram_chat_invite_link = response.json().get("result")
+        url = f"https://api.telegram.org/bot{telegram_token}/createChatInviteLink?chat_id={telegram_chat_id}"
+        response = requests.get(url)
+        telegram_chat_invite_link = response.json().get("result")
 
-    if "invite_link" in telegram_get_chat: print("Chat Invite Link (created): " + str(telegram_chat_invite_link["invite_link"]))
+        if "invite_link" in telegram_get_chat: print("Chat Invite Link (created): " + str(telegram_chat_invite_link["invite_link"]))
 
-    # Get Chat Member Count
+        # Get Chat Member Count
 
-    url = f"https://api.telegram.org/bot{telegram_token}/getChatMemberCount?chat_id={telegram_chat_id}"
-    response = requests.get(url)
-    telegram_chat_members_count = response.json().get("result")
+        url = f"https://api.telegram.org/bot{telegram_token}/getChatMemberCount?chat_id={telegram_chat_id}"
+        response = requests.get(url)
+        telegram_chat_members_count = response.json().get("result")
 
-    print("Number of users in the chat: " + str(telegram_chat_members_count))
+        print("Number of users in the chat: " + str(telegram_chat_members_count))
 
-    # Get Administrators in chat
+        # Get Administrators in chat
 
-    url = f"https://api.telegram.org/bot{telegram_token}/getChatAdministrators?chat_id={telegram_chat_id}"
-    response = requests.get(url)
-    telegram_get_chat_administrators = response.json().get("result")
+        url = f"https://api.telegram.org/bot{telegram_token}/getChatAdministrators?chat_id={telegram_chat_id}"
+        response = requests.get(url)
+        telegram_get_chat_administrators = response.json().get("result")
 
-    if telegram_get_chat_administrators:
-        print("Administrators in the chat:")
-        for user in telegram_get_chat_administrators:
-            print(user["user"])
-
+        if telegram_get_chat_administrators:
+            print("Administrators in the chat:")
+            for user in telegram_get_chat_administrators:
+                print(user["user"])
+    else:
+        print("Telegram token is invalid or revoked.")
 
 
 if __name__ == "__main__":
