@@ -30,9 +30,11 @@ def main():
         if response.json().get('result'):
             telegram_get_chat_member = response.json().get('result')
             print(f"Bot In The Chat Is An: {telegram_get_chat_member['status']}")
-        elif response.json().get('parameters')['migrate_to_chat_id']:
-            migrate_to_chat_id = response.json().get('parameters')['migrate_to_chat_id']
-            print(f"ATTENTION {response.json().get('description')} - Migrated to: {migrate_to_chat_id}")
+        elif response.json().get('description'):
+            if response.json().get('parameters') and 'migrate_to_chat_id' in response.json().get('parameters'): 
+                print(f"ATTENTION {response.json().get('description')} - Migrated to: {response.json().get('parameters')['migrate_to_chat_id']}")
+            else:
+                print(f"ATTENTION {response.json().get('description')}")
 
         # Get Chat Info
 
