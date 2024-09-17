@@ -1,8 +1,8 @@
-# tosint - Telegram OSINT Tool
+# Tosint - Telegram OSINT Tool
 
-tosint (Telegram OSINT) is a tool designed to extract valuable information from Telegram bots and channels. 
+Tosint (Telegram OSINT) is a tool designed to extract valuable information from Telegram bots and channels. 
 It is ideal for security researchers, investigators, and anyone interested in gathering insights from Telegram entities. 
-Using OSINT techniques, tosint can uncover essential details about bots and associated channels, offering a deeper understanding of their structure and activity.
+Using OSINT techniques, Tosint can uncover essential details about bots and associated channels, offering a deeper understanding of their structure and activity.
 
 ### Features
 
@@ -13,6 +13,12 @@ Tosint allows you to extract the following information:
 - **Additional Information**:
     - Number of users in the chat.
     - Details of chat administrators, including their roles (e.g., admin, member).
+
+### Who Uses Tosint?
+
+Tosint has been adopted by security researchers, investigators, and professionals in the field of open-source intelligence (OSINT) to gather insights from Telegram bots and channels. 
+
+I'm proud to mention that Tosint is also used by law enforcement agencies for investigative purposes, further demonstrating its practical value in real-world applications.
 
 ### Example Usage
 
