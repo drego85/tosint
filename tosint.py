@@ -1,21 +1,42 @@
 #!/usr/bin/env python3
+import argparse
 import requests
 
 def main():
-    telegram_token = input('Telegram Token (bot1xxx): ').strip()
-    telegram_chat_id = input('Telegram Chat ID (-100xxx): ').strip()
+    # Initialize the argument parser for command-line parameters
+    parser = argparse.ArgumentParser(description='OSINT analysis for Telegram bots.')
 
+    # Add options for token and chat ID
+    parser.add_argument('-t', '--token', type=str, help='Telegram Token (bot1xxx)', required=False)
+    parser.add_argument('-c', '--chat_id', type=str, help='Telegram Chat ID (-100xxx)', required=False)
+
+    # Parse the command-line arguments
+    args = parser.parse_args()
+
+    # If the token is not provided via command line, prompt the user for input
+    if args.token:
+        telegram_token = args.token.strip()
+    else:
+        telegram_token = input('Telegram Token (bot1xxx): ').strip()
+
+    # If the chat ID is not provided via command line, prompt the user for input
+    if args.chat_id:
+        telegram_chat_id = args.chat_id.strip()
+    else:
+        telegram_chat_id = input('Telegram Chat ID (-100xxx): ').strip()
+
+    # Remove the 'bot' prefix from the token if it exists
     if telegram_token.startswith('bot'):
         telegram_token = telegram_token[3:]
 
     print(f"\nAnalysis of token: {telegram_token} and chat id: {telegram_chat_id}\n")
 
     # Get Bot Info
-
     url = f"https://api.telegram.org/bot{telegram_token}/getMe"
     response = requests.get(url)
     telegram_get_me = response.json().get('result')
 
+    # If the response contains bot information, print the relevant details
     if telegram_get_me:
        
         print(f"Bot First Name: {telegram_get_me['first_name']}")
@@ -56,7 +77,7 @@ def main():
         response = requests.get(url)
         telegram_chat_invite_link = response.json().get("result")
 
-        print("Chat Invite Link (exported): " + str(telegram_chat_invite_link))
+        print(f"Chat Invite Link (exported): {telegram_chat_invite_link}")
 
         # Create Chat Invite Link
 

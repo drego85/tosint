@@ -1,21 +1,42 @@
-# tosint
+# tosint - Telegram OSINT Tool
 
-Tosint (Telegram OSINT) is a tools to extract information from telegram bots and related associated channels.
+tosint (Telegram OSINT) is a tool designed to extract valuable information from Telegram bots and channels. 
+It is ideal for security researchers, investigators, and anyone interested in gathering insights from Telegram entities. 
+Using OSINT techniques, tosint can uncover essential details about bots and associated channels, offering a deeper understanding of their structure and activity.
+
+### Features
 
 Tosint allows you to extract the following information:
 
-* Bot information (First Name, Username, User ID, Status);
-* Chat information (Title, Type, ID, Username, Invite Link);
-* Invite Link;  
-* Number of users in the chat;
-* Information about chat administrators.
+- **Bot Information**: First Name, Username, User ID, Status, and whether the bot can read group messages.
+- **Chat Information**: Chat Title, Type (group or channel), ID, Username, Invite Link.
+- **Additional Information**:
+    - Number of users in the chat.
+    - Details of chat administrators, including their roles (e.g., admin, member).
 
-### Example
+### Example Usage
 
+To use Tosint, you can either provide the `Telegram Token` and `Chat ID` interactively, or pass them as command-line arguments.
+
+**Interactive Mode**:
 ```
 $ python3 tosint.py
 Telegram Token (bot1xxx): 562ZZZZ900:XXXXNj7_wIEi74GXXX90CIxACBIX_YYYYwI
 Telegram Chat ID (-100xxx): -1001XXXXXX196
+```
+
+**Command-Line Arguments**:
+```
+$ python3 tosint.py -t 562ZZZZ900:XXXXNj7_wIEi74GXXX90CIxACBIX_YYYYwI -c -1001XXXXXX196
+```
+
+Both approaches will provide you with detailed information about the bot and chat.
+
+### Example Output
+
+After running the tool, the following is an example of the output you can expect:
+
+```
 
 Analysis of token: 562ZZZZ900:XXXXNj7_wIEi74GXXX90CIxACBIX_YYYYwI and chat id: -1001XXXXXX196
 
@@ -38,6 +59,38 @@ Administrators in the chat:
 {'id': 20XXXX39, 'is_bot': False, 'first_name': 'Andrea', 'last_name': 'Draghetti', 'username': 'AndreaDraghetti'}
 ```
 
+### Installation
+
+1. Clone the repository:
+```
+git clone https://github.com/drego85/tosint.git
+```
+
+2. Install the required dependencies:
+```
+pip install -r requirements.txt
+```
+
+3. Run the tool:
+```
+python3 tosint.py
+```
+
+Make sure you have Python 3.x installed.
+
+### Contributing and Supporting the Project
+
+There are two ways you can contribute to the development of **Tosint**:
+
+1. **Development Contributions**:
+
+   Please ensure that your code follows best practices and includes relevant tests.
+
+2. **Donation Support**:
+   If you find this project useful and would like to support its development, you can also make a donation via [Buy Me a Coffee](https://buymeacoffee.com/andreadraghetti). Your support is greatly appreciated and helps to keep this project going!
+
+   [![Buy Me a Coffee](https://img.shields.io/badge/-Buy%20Me%20a%20Coffee-orange?logo=buy-me-a-coffee&logoColor=white&style=flat-square)](https://buymeacoffee.com/andreadraghetti)
+
 ### License
 
-GNU General Public License v3.0
+This project is licensed under the GNU General Public License v3.0.
