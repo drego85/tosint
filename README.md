@@ -14,6 +14,18 @@ Tosint allows you to extract the following information:
     - Number of users in the chat.
     - Details of chat administrators, including their roles (e.g., admin, member).
 
+
+### Use Cases
+
+Tosint is a valuable tool for cybersecurity researchers involved in the analysis of malware or phishing kits. Cybercriminals increasingly use Telegram to collect information stolen from victims, such as:
+
+- **Malware logs**
+- **Login credentials**
+- **Credit or debit card details**
+
+During investigations, by identifying the Token and Chat ID used by criminals (often found through malware or phishing kit analysis), Tosint enables the collection of valuable information to monitor the criminal activities. This helps researchers gain a clearer understanding of the infrastructure used by attackers, supporting a timely and targeted response to emerging threats.
+
+
 ### Who Uses Tosint?
 
 Tosint has been adopted by security researchers, investigators, and professionals in the field of open-source intelligence (OSINT) to gather insights from Telegram bots and channels. 
