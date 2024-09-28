@@ -1,110 +1,159 @@
 #!/usr/bin/env python3
 import argparse
 import requests
+import threading
+import json
+import yaml
+
+# Base URL for Telegram API
+TELEGRAM_API_URL = "https://api.telegram.org"
+
+
+def get_bot_info(telegram_token):
+    url = f"{TELEGRAM_API_URL}/bot{telegram_token}/getMe"
+    response = requests.get(url)
+    return response.json().get('result')
+
+
+def get_chat_member_info(telegram_token, telegram_chat_id, bot_id):
+    url = f"{TELEGRAM_API_URL}/bot{telegram_token}/getChatMember?chat_id={telegram_chat_id}&user_id={bot_id}"
+    response = requests.get(url)
+    return response.json()
+
+
+def get_chat_info(telegram_token, telegram_chat_id):
+    url = f"{TELEGRAM_API_URL}/bot{telegram_token}/getChat?chat_id={telegram_chat_id}"
+    response = requests.get(url)
+    return response.json().get('result')
+
+
+def export_chat_invite_link(telegram_token, telegram_chat_id):
+    url = f"{TELEGRAM_API_URL}/bot{telegram_token}/exportChatInviteLink?chat_id={telegram_chat_id}"
+    response = requests.get(url)
+    return response.json().get('result')
+
+
+def create_chat_invite_link(telegram_token, telegram_chat_id):
+    url = f"{TELEGRAM_API_URL}/bot{telegram_token}/createChatInviteLink?chat_id={telegram_chat_id}"
+    response = requests.get(url)
+    return response.json().get('result')
+
+
+def get_chat_member_count(telegram_token, telegram_chat_id):
+    url = f"{TELEGRAM_API_URL}/bot{telegram_token}/getChatMemberCount?chat_id={telegram_chat_id}"
+    response = requests.get(url)
+    return response.json().get('result')
+
+
+def get_chat_administrators(telegram_token, telegram_chat_id):
+    url = f"{TELEGRAM_API_URL}/bot{telegram_token}/getChatAdministrators?chat_id={telegram_chat_id}"
+    response = requests.get(url)
+    return response.json().get('result')
+
+
+def format_output(data, output_format):
+    if output_format == 'json':
+        return json.dumps(data, indent=4)
+    elif output_format == 'yaml':
+        return yaml.dump(data, default_flow_style=False)
+    else:
+        raise ValueError("Unsupported format. Please choose 'json' or 'yaml'.")
+
+
+def format_human_output(output_data):
+    bot_info = output_data.get('bot_info') or {}
+    chat_info = output_data.get('chat_info') or {}
+
+    output = [
+        f"Bot First Name: {bot_info.get('first_name', 'Not available')}",
+        f"Bot Username: {bot_info.get('username', 'Not available')}",
+        f"Bot User ID: {bot_info.get('id', 'Not available')}",
+        f"Bot Can Read Group Messages: {bot_info.get('can_read_all_group_messages', 'Not available')}",
+        f"Bot In The Chat Is An: {output_data.get('bot_chat_status', 'Not available')}",
+        f"Chat Title: {chat_info.get('title', 'Not available')}",
+        f"Chat Type: {chat_info.get('type', 'Not available')}",
+        f"Chat ID: {chat_info.get('id', 'Not available')}",
+        f"Chat has Visible History: {chat_info.get('has_linked_chat', 'Not available')}",
+        f"Chat Username: {chat_info.get('username', 'Not available')}",
+        f"Chat Invite Link: {chat_info.get('invite_link', 'Not available')}",
+        f"Chat Invite Link (exported): {output_data.get('exported_chat_invite_link', 'Not available')}",
+        f"Chat Invite Link (created): {output_data.get('created_chat_invite_link', 'Not available')}",
+        f"Number of users in the chat: {output_data.get('chat_member_count', 'Not available')}",
+        f"Administrators in the chat: {output_data.get('chat_administrators', 'Not available')}"
+    ]
+
+    return "\n".join(output)
+
 
 def main():
-    # Initialize the argument parser for command-line parameters
     parser = argparse.ArgumentParser(description='OSINT analysis for Telegram bots.')
 
-    # Add options for token and chat ID
     parser.add_argument('-t', '--token', type=str, help='Telegram Token (bot1xxx)', required=False)
     parser.add_argument('-c', '--chat_id', type=str, help='Telegram Chat ID (-100xxx)', required=False)
+    parser.add_argument('-o', '--output', type=str, choices=['json', 'yaml'],
+                        help="Output format: 'json' or 'yaml'", required=False)
 
-    # Parse the command-line arguments
     args = parser.parse_args()
 
-    # If the token is not provided via command line, prompt the user for input
-    if args.token:
-        telegram_token = args.token.strip()
-    else:
-        telegram_token = input('Telegram Token (bot1xxx): ').strip()
+    telegram_token = args.token.strip() if args.token else input('Telegram Token (bot1xxx): ').strip()
 
-    # If the chat ID is not provided via command line, prompt the user for input
-    if args.chat_id:
-        telegram_chat_id = args.chat_id.strip()
-    else:
-        telegram_chat_id = input('Telegram Chat ID (-100xxx): ').strip()
+    telegram_chat_id = args.chat_id.strip() if args.chat_id else input('Telegram Chat ID (-100xxx): ').strip()
 
-    # Remove the 'bot' prefix from the token if it exists
     if telegram_token.startswith('bot'):
         telegram_token = telegram_token[3:]
 
-    print(f"\nAnalysis of token: {telegram_token} and chat id: {telegram_chat_id}\n")
+    output_data = {}
 
-    # Get Bot Info
-    url = f"https://api.telegram.org/bot{telegram_token}/getMe"
-    response = requests.get(url)
-    telegram_get_me = response.json().get('result')
+    bot_info = get_bot_info(telegram_token)
 
-    # If the response contains bot information, print the relevant details
-    if telegram_get_me:
-       
-        print(f"Bot First Name: {telegram_get_me['first_name']}")
-        print(f"Bot Username: {telegram_get_me['username']}")
-        print(f"Bot User ID: {telegram_get_me['id']}")
-        print(f"Bot Can Read Group Messages: {telegram_get_me['can_read_all_group_messages']}")
+    if bot_info:
+        output_data['bot_info'] = {
+            'first_name': bot_info['first_name'],
+            'username': bot_info['username'],
+            'id': bot_info['id'],
+            'can_read_all_group_messages': bot_info.get('can_read_all_group_messages', 'Not available')
+        }
 
-        # Get Bot Status - Member or Admin
+        def get_member_info():
+            output_data['bot_chat_status'] = get_chat_member_info(telegram_token, telegram_chat_id, bot_info['id']).get(
+                'result', {}).get('status', 'N/A')
 
-        url = f"https://api.telegram.org/bot{telegram_token}/getChatMember?chat_id={telegram_chat_id}&user_id={telegram_get_me['id']}"
-        response = requests.get(url)
-        if response.json().get('result'):
-            telegram_get_chat_member = response.json().get('result')
-            print(f"Bot In The Chat Is An: {telegram_get_chat_member['status']}")
-        elif response.json().get('description'):
-            if response.json().get('parameters') and 'migrate_to_chat_id' in response.json().get('parameters'): 
-                print(f"ATTENTION {response.json().get('description')} - Migrated to: {response.json().get('parameters')['migrate_to_chat_id']}")
-            else:
-                print(f"ATTENTION {response.json().get('description')}")
+        def get_chat_info_thread():
+            output_data['chat_info'] = get_chat_info(telegram_token, telegram_chat_id)
 
-        # Get Chat Info
+        def export_chat_link():
+            output_data['exported_chat_invite_link'] = export_chat_invite_link(telegram_token, telegram_chat_id)
 
-        url = f"https://api.telegram.org/bot{telegram_token}/getChat?chat_id={telegram_chat_id}"
-        response = requests.get(url)
-        telegram_get_chat = response.json().get('result')
+        def create_chat_link():
+            output_data['created_chat_invite_link'] = create_chat_invite_link(telegram_token, telegram_chat_id)
 
-        if 'title' in telegram_get_chat: print(f"Chat Title: {telegram_get_chat['title']}")
-        print(f"Chat Type: {telegram_get_chat['type']}")
-        print(f"Chat ID: {telegram_get_chat['id']}")
-        if 'has_visible_history' in telegram_get_chat: print(f"Chat has Visible History: {telegram_get_chat['has_visible_history']}")
-        if 'username' in telegram_get_chat: print(f"Chat Username: {telegram_get_chat['username']}")
-        if 'invite_link' in telegram_get_chat: print(f"Chat Invite Link: {telegram_get_chat['invite_link']}")
+        def chat_member_count():
+            output_data['chat_member_count'] = get_chat_member_count(telegram_token, telegram_chat_id)
 
+        def chat_administrators():
+            output_data['chat_administrators'] = get_chat_administrators(telegram_token, telegram_chat_id)
 
-        # Export Chat Invite Link
+        # Initialize and start threads
+        threads = [
+            threading.Thread(target=get_member_info),
+            threading.Thread(target=get_chat_info_thread),
+            threading.Thread(target=export_chat_link),
+            threading.Thread(target=create_chat_link),
+            threading.Thread(target=chat_member_count),
+            threading.Thread(target=chat_administrators)
+        ]
 
-        url = f"https://api.telegram.org/bot{telegram_token}/exportChatInviteLink?chat_id={telegram_chat_id}"
-        response = requests.get(url)
-        telegram_chat_invite_link = response.json().get("result")
+        for thread in threads:
+            thread.start()
 
-        print(f"Chat Invite Link (exported): {telegram_chat_invite_link}")
+        for thread in threads:
+            thread.join()
 
-        # Create Chat Invite Link
-
-        url = f"https://api.telegram.org/bot{telegram_token}/createChatInviteLink?chat_id={telegram_chat_id}"
-        response = requests.get(url)
-        telegram_chat_invite_link = response.json().get('result')
-
-        if "invite_link" in telegram_get_chat: print(f"Chat Invite Link (created): {telegram_chat_invite_link['invite_link']}")
-
-        # Get Chat Member Count
-
-        url = f"https://api.telegram.org/bot{telegram_token}/getChatMemberCount?chat_id={telegram_chat_id}"
-        response = requests.get(url)
-        telegram_chat_members_count = response.json().get('result')
-
-        print(f"Number of users in the chat: {telegram_chat_members_count}")
-
-        # Get Administrators in chat
-
-        url = f"https://api.telegram.org/bot{telegram_token}/getChatAdministrators?chat_id={telegram_chat_id}"
-        response = requests.get(url)
-        telegram_get_chat_administrators = response.json().get('result')
-
-        if telegram_get_chat_administrators:
-            print(f"Administrators in the chat:")
-            for user in telegram_get_chat_administrators:
-                print(user['user'])
+        if args.output:
+            if args.output in ['json', 'yaml']:
+                print(format_output(output_data, args.output))
+        else:
+            print(format_human_output(output_data))
     else:
         print('Telegram token is invalid or revoked.')
 
