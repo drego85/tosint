@@ -4,6 +4,20 @@ Tosint (Telegram OSINT) is a tool designed to extract valuable information from 
 It is ideal for security researchers, investigators, and anyone interested in gathering insights from Telegram entities. 
 Using OSINT techniques, Tosint can uncover essential details about bots and associated channels, offering a deeper understanding of their structure and activity.
 
+## Table of Contents
+
+- [Features](#features)
+- [User Cases](#use-cases)
+- [Who Uses Tosint?](#who-uses-tosint)
+- [Example Usage](#example-usage)
+- [Example Output](#example-output)
+  - [Human format](#human-format)
+  - [Json or Yaml formats](#json-or-yaml-formats)
+- [Installation](#installation)
+  - [Use via docker](#use-via-docker)
+- [Contributing and Supporting the Project](#contributing-and-supporting-the-project)
+- [License](#license)
+
 ### Features
 
 Tosint allows you to extract the following information:
@@ -33,6 +47,7 @@ I'm proud to mention that Tosint is also used by law enforcement agencies for in
 To use Tosint, you can either provide the `Telegram Token` and `Chat ID` interactively, or pass them as command-line arguments.
 
 **Interactive Mode**:
+
 ```
 $ python3 tosint.py
 Telegram Token (bot1xxx): 562ZZZZ900:XXXXNj7_wIEi74GXXX90CIxACBIX_YYYYwI
@@ -48,12 +63,10 @@ Both approaches will provide you with detailed information about the bot and cha
 
 ### Example Output
 
+#### Human format
 After running the tool, the following is an example of the output you can expect:
 
 ```
-
-Analysis of token: 562ZZZZ900:XXXXNj7_wIEi74GXXX90CIxACBIX_YYYYwI and chat id: -1001XXXXXX196
-
 Bot First Name: Over Security Bot
 Bot Username: over_security_bot
 Bot User ID: 56XXXXXX00
@@ -73,6 +86,46 @@ Administrators in the chat:
 {'id': 20XXXX39, 'is_bot': False, 'first_name': 'Andrea', 'last_name': 'Draghetti', 'username': 'AndreaDraghetti'}
 ```
 
+#### Json or Yaml formats
+
+By specifying the flag `-o <format>` is possible to have `json` or `yaml` outputs:
+
+1. `json`
+```
+$ python3 tosint.py -t 75XXXXXX67:AXXQi_iKxxxE_mNDxxxxxxxxxzZ8t6QIHak -c -11xxxxx2 -o json
+{
+    "bot_info": {
+        "first_name": "test",
+        "username": "fancybot",
+        "id": 75XXXXXX67,
+        "can_read_all_group_messages": false
+    },
+    "chat_administrators": null,
+    "created_chat_invite_link": null,
+    "exported_chat_invite_link": null,
+    "chat_member_count": null,
+    "chat_info": null,
+    "bot_chat_status": "N/A"
+}
+```
+
+2. `yaml`
+
+```
+$ python3 tosint.py -t 75XXXXXX67:AXXQi_iKxxxE_mNDxxxxxxxxxzZ8t6QIHak -c -11xxxxx2 -o yaml
+bot_chat_status: N/A
+bot_info:
+  can_read_all_group_messages: false
+  first_name: test
+  id: 75XXXXXX67
+  username: fancybot
+chat_administrators: null
+chat_info: null
+chat_member_count: null
+created_chat_invite_link: null
+exported_chat_invite_link: null
+```
+
 ### Installation
 
 1. Clone the repository:
@@ -88,6 +141,24 @@ pip install -r requirements.txt
 3. Run the tool:
 ```
 python3 tosint.py
+```
+
+#### Use via docker
+
+1. Clone the repository:
+```
+git clone https://github.com/drego85/tosint.git
+```
+
+2. Build docker image:
+```
+docker build -t tosint .
+```
+
+3. Run application
+
+```
+docker run -it tosint
 ```
 
 Make sure you have Python 3.x installed.
