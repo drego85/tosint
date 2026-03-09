@@ -4,7 +4,16 @@ Tosint (Telegram OSINT) is a Python tool to analyze a Telegram bot token and a t
 
 It is designed for investigators, threat analysts, and security researchers who need quick visibility into Telegram entities used in phishing, malware logs, credential collection, and similar campaigns.
 
-## What Tosint Extracts
+It can also download message history and media from a channel/group/DM using a user account session via Pyrofork (MTProto).
+
+## Use Cases
+
+- Telegram OSINT investigations on suspicious bots/channels/groups
+- Threat intelligence enrichment for phishing and malware delivery chains
+- DFIR/forensic collection of Telegram chat metadata and content
+- Telegram channel/group message export for offline analysis
+
+## Telegram OSINT Data Extracted
 
 ### Bot Intelligence
 
@@ -53,7 +62,7 @@ From `getChatAdministrators`, Tosint prints each admin with:
 - custom title (if present)
 - granular admin permissions (`can_*`, plus `is_anonymous`)
 
-## Output Modes
+## Output Formats (Text and JSON)
 
 Tosint supports both human-readable and JSON output.
 
@@ -77,7 +86,25 @@ cd tosint
 pip install -r requirements.txt
 ```
 
-## Usage
+`tgcrypto` is optional from a functional perspective, but strongly recommended for much faster MTProto upload/download performance.
+
+## How to Get Telegram API_ID and API_HASH
+
+To use MTProto download features (`--downloads`), you need your Telegram `API_ID` and `API_HASH`.
+
+Follow the official Telegram guide:
+[Obtaining api_id](https://core.telegram.org/api/obtaining_api_id)
+
+For convenience, you can save these values in a local `.env` file (faster repeated analysis), or skip `.env` and enter them interactively at runtime.
+
+Recommended `.env` format:
+
+```dotenv
+TELEGRAM_API_ID=123456
+TELEGRAM_API_HASH=0123456789abcdef0123456789abcdef
+```
+
+## Usage and CLI Examples
 
 ### Interactive mode
 
@@ -103,14 +130,40 @@ python3 tosint.py -t <TELEGRAM_BOT_TOKEN> -c <TELEGRAM_CHAT_ID> --json
 python3 tosint.py -t <TELEGRAM_BOT_TOKEN> -c <TELEGRAM_CHAT_ID> --json-file /tmp/tosint_report.json
 ```
 
+### Download chat history and media
+
+```bash
+python3 tosint.py -t <TELEGRAM_BOT_TOKEN> -c <TELEGRAM_CHAT_ID> --downloads
+```
+
+This uses `--download-mode auto` by default:
+- first tries MTProto history (`get_chat_history`)
+- if that fails (for example `PEER_ID_INVALID`), it falls back to ID scan (`get_messages` by `message_id`) similarly to TeleTracker.
+- output is saved under `downloads/<bot_username>/` with:
+  - `messages_<chat_title_sanitized>.jsonl` (structured JSON lines)
+  - `messages_<chat_title_sanitized>.txt` (human-readable text log)
+  - `media/` (downloaded attachments when media download is enabled)
+
+
 ### Options
 
 - `-t`, `--token`: Telegram bot token (with or without `bot` prefix)
 - `-c`, `--chat_id`: Telegram chat ID (e.g. `-100...` for channels/supergroups)
 - `--json`: print JSON report only
 - `--json-file`: save JSON report to chosen path
+- `--downloads` (`--download` alias): download messages/media
+- `--api-id`: Telegram API ID (used by `--downloads`)
+- `--api-hash`: Telegram API hash (used by `--downloads`)
+- `--session-name`: Pyrofork session name/path override. If omitted, Tosint auto-creates a scoped session under `sessions/<bot>_<chat>/tosint_user`
+- `--download-dir`: target folder for downloaded content (default: `downloads`)
+- `--download-limit`: max messages to export (`0` = all)
+- `--download-mode`: `auto`, `history`, `idscan` (default: `auto`)
+- `--download-start-id`: start `message_id` for `idscan` mode
+- `--download-progress-every`: print progress every N scanned messages (`0` disables, default: `50`)
+- `--skip-media-download`: skip attachment files and export only message metadata/text
+- `--env-file`: `.env` path for loading values (default: `.env`)
 
-## Example Text Output (obfuscated)
+### Example Text Output (obfuscated)
 
 ```text
 Analysis of token: 81XXXXXX66:AAF... and chat id: -1003XXXX075
@@ -151,7 +204,7 @@ Administrators in the chat:
   Permissions: {"can_manage_chat": true, "can_delete_messages": true, ...}
 ```
 
-## Example JSON Report (structure)
+### Example JSON Report (structure)
 
 ```json
 {
@@ -199,12 +252,28 @@ Administrators in the chat:
 }
 ```
 
-## Operational Notes
+## Alternatives and Related Projects
+
+- [TelePeek](https://telepeek.com/)
+- [TeleTracker](https://github.com/tsale/TeleTracker/)
+- [telegram-scraper](https://github.com/unnohwn/telegram-scraper)
+- [telegram-scraper DarkWebInformer](https://github.com/DarkWebInformer/telegram-scraper)
+
+## Operational and Forensic Notes
 
 - Some fields are returned by Telegram only when the bot has enough visibility/permissions.
 - Invite-link methods are active operations (`exportChatInviteLink`, `createChatInviteLink`) and may fail based on bot role.
+- During MTProto downloads in `idscan` mode (or `auto` fallback), Tosint may send a temporary `.` message to derive the latest `message_id` when no explicit `--download-start-id` is provided.
+- Tosint then attempts to delete that temporary message immediately. If deletion is not allowed by chat rules/permissions, the message may remain visible and this is reported in the tool output (`Temporary message cleanup failed: ...`).
+- OSINT/forensics note: this behavior is an active interaction with the target chat. If strict non-interference is required, provide `--download-start-id` explicitly to avoid sending the temporary message.
 
-### Contributing and Supporting the Project
+## Troubleshooting
+
+- `PEER_ID_INVALID` / `CHAT_ID_INVALID`: try a separate session (`--session-name`) and/or the other authentication mode (bot token vs user account).
+- Many scanned messages but `exported=0`: the scanned ID range may not be accessible/visible for that session; try `--download-mode history` or a different `--download-start-id`.
+- Frequent `Waiting for X seconds` messages: this is Telegram FloodWait rate limiting and is expected on large `idscan` runs.
+
+## Contributing and Supporting the Project
 
 There are three ways you can contribute to the development of **Tosint**:
 

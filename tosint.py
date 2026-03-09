@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-import argparse
+import os
 import json
 import requests
+import argparse
+import mimetypes
+from datetime import datetime
 
 TEXT_OUTPUT_ENABLED = True
 
@@ -131,6 +134,12 @@ def telegram_api_get(token, method, params=None):
     return response.json()
 
 
+def telegram_api_post(token, method, data=None):
+    url = f"https://api.telegram.org/bot{token}/{method}"
+    response = requests.post(url, data=data)
+    return response.json()
+
+
 def get_bot_info(token):
     return telegram_api_get(token, "getMe")
 
@@ -178,6 +187,16 @@ def get_chat_administrators(token, chat_id):
     return telegram_api_get(token, "getChatAdministrators", params=params)
 
 
+def send_message(token, chat_id, text):
+    data = {"chat_id": chat_id, "text": text}
+    return telegram_api_post(token, "sendMessage", data=data)
+
+
+def delete_message(token, chat_id, message_id):
+    data = {"chat_id": chat_id, "message_id": message_id}
+    return telegram_api_post(token, "deleteMessage", data=data)
+
+
 def print_invite_links(chat_invite_link, exported_invite_link, created_invite_link):
     if not chat_invite_link and not exported_invite_link and not created_invite_link:
         text_print("Invite Links: None")
@@ -219,6 +238,389 @@ def emit_json_report(report, print_json, json_file):
             text_print(f"\nATTENTION Unable to save JSON report to '{json_file}': {error}")
 
 
+def load_env_file(env_path):
+    env_values = {}
+    if not env_path:
+        return env_values
+    if not os.path.exists(env_path):
+        return env_values
+
+    try:
+        with open(env_path, "r", encoding="utf-8") as file_obj:
+            for raw_line in file_obj:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                    value = value[1:-1]
+                if key:
+                    env_values[key] = value
+    except OSError as error:
+        text_print(f"ATTENTION Unable to read env file '{env_path}': {error}")
+    return env_values
+
+
+def get_value(cli_value, env_values, env_key=None, prompt_text=None):
+    if cli_value is not None and str(cli_value).strip():
+        return str(cli_value).strip()
+    if env_key and env_values.get(env_key):
+        return env_values[env_key].strip()
+    if prompt_text:
+        return input(prompt_text).strip()
+    return None
+
+
+def message_to_json(message, downloaded_file=None):
+    from_user = getattr(message, "from_user", None)
+    sender_chat = getattr(message, "sender_chat", None)
+    date_value = getattr(message, "date", None)
+    if isinstance(date_value, datetime):
+        date_value = date_value.isoformat()
+    media_type = None
+    if getattr(message, "media", None):
+        media_type = str(message.media)
+
+    return {
+        "message_id": getattr(message, "id", None),
+        "date": date_value,
+        "from_user_id": getattr(from_user, "id", None) if from_user else None,
+        "from_username": getattr(from_user, "username", None) if from_user else None,
+        "sender_chat_id": getattr(sender_chat, "id", None) if sender_chat else None,
+        "text": getattr(message, "text", None),
+        "caption": getattr(message, "caption", None),
+        "media_type": media_type,
+        "downloaded_file": downloaded_file,
+    }
+
+
+def message_to_text(message, downloaded_file=None):
+    date_value = getattr(message, "date", None)
+    if isinstance(date_value, datetime):
+        date_value = date_value.isoformat()
+    from_user = getattr(message, "from_user", None)
+    sender_chat = getattr(message, "sender_chat", None)
+    media_type = str(getattr(message, "media", "")) if getattr(message, "media", None) else ""
+    text_value = getattr(message, "text", None) or ""
+    caption_value = getattr(message, "caption", None) or ""
+    lines = []
+    message_id = getattr(message, "id", None)
+    if message_id is not None:
+        lines.append(f"Message ID: {message_id}")
+    if date_value:
+        lines.append(f"Date: {date_value}")
+    if from_user and getattr(from_user, "id", None) is not None:
+        lines.append(f"From User ID: {from_user.id}")
+    if from_user and getattr(from_user, "username", None):
+        lines.append(f"From Username: {from_user.username}")
+    if sender_chat and getattr(sender_chat, "id", None) is not None:
+        lines.append(f"Sender Chat ID: {sender_chat.id}")
+    if media_type:
+        lines.append(f"Media Type: {media_type}")
+    if text_value:
+        lines.append(f"Text: {normalize_single_line(text_value)}")
+    if caption_value:
+        lines.append(f"Caption: {normalize_single_line(caption_value)}")
+    if downloaded_file:
+        lines.append(f"Downloaded File: {downloaded_file}")
+    return "\n".join(lines) + "\n" + ("-" * 40) + "\n"
+
+
+def sanitize_path_segment(value):
+    if value is None:
+        return "unknown"
+    safe = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in str(value).strip())
+    return safe or "unknown"
+
+
+def build_messages_stem(chat_title=None, chat_id=None):
+    title_segment = sanitize_path_segment(chat_title).strip("._-").lower() if chat_title else ""
+    if title_segment and title_segment != "unknown":
+        return f"messages_{title_segment}"
+    chat_segment = sanitize_path_segment(chat_id).strip("._-").lower() if chat_id is not None else ""
+    if chat_segment and chat_segment != "unknown":
+        return f"messages_{chat_segment}"
+    return "messages_unknown"
+
+
+def build_bot_download_dir(base_download_dir, bot_username):
+    bot_segment = sanitize_path_segment(bot_username or "unknown_bot")
+    return os.path.join(base_download_dir, bot_segment)
+
+
+def build_scoped_session_name(cli_session_name, chat_id, bot_username=None):
+    if cli_session_name:
+        return cli_session_name
+    chat_segment = sanitize_path_segment(chat_id)
+    bot_segment = sanitize_path_segment(bot_username) if bot_username else "unknown_bot"
+    return os.path.join("sessions", f"{bot_segment}_{chat_segment}", "tosint_user")
+
+
+def display_path(path_value):
+    try:
+        return os.path.relpath(path_value, os.getcwd())
+    except ValueError:
+        return path_value
+
+
+def ensure_dir_path(path_value):
+    if path_value.endswith(os.sep):
+        return path_value
+    return path_value + os.sep
+
+
+def infer_media_extension(message):
+    # Prefer original file extension when Telegram provides a file name.
+    for attr in ("document", "audio", "video", "animation"):
+        media_obj = getattr(message, attr, None)
+        if media_obj and getattr(media_obj, "file_name", None):
+            _, ext = os.path.splitext(media_obj.file_name)
+            if ext:
+                return ext
+        if media_obj and getattr(media_obj, "mime_type", None):
+            guessed = mimetypes.guess_extension(media_obj.mime_type)
+            if guessed:
+                return guessed
+
+    media_type = str(getattr(message, "media", "")).upper()
+    if "PHOTO" in media_type:
+        return ".jpg"
+    if "VOICE" in media_type:
+        return ".ogg"
+    if "VIDEO_NOTE" in media_type or "VIDEO" in media_type:
+        return ".mp4"
+    if "STICKER" in media_type:
+        return ".webp"
+    return None
+
+
+def normalize_downloaded_media_path(downloaded_file, message):
+    if not downloaded_file:
+        return downloaded_file
+    root, ext = os.path.splitext(downloaded_file)
+    if ext:
+        return downloaded_file
+
+    inferred_ext = infer_media_extension(message)
+    if not inferred_ext:
+        return downloaded_file
+
+    target_path = f"{downloaded_file}{inferred_ext}"
+    try:
+        os.replace(downloaded_file, target_path)
+        return target_path
+    except OSError:
+        return downloaded_file
+
+
+def process_download_message(message, app, chat_id, download_dir, manifest_file, text_file, result, skip_media=False):
+    if not getattr(message, "date", None):
+        return False
+
+    downloaded_file = None
+    if getattr(message, "media", None) and not skip_media:
+        try:
+            media_dir = os.path.join(download_dir, "media")
+            os.makedirs(media_dir, exist_ok=True)
+            downloaded_file = app.download_media(message, file_name=ensure_dir_path(media_dir))
+            downloaded_file = normalize_downloaded_media_path(downloaded_file, message)
+            if downloaded_file:
+                result["media_downloaded"] += 1
+        except Exception as download_error:
+            result["errors"].append(
+                f"message_id={getattr(message, 'id', None)} download error: {download_error}"
+            )
+
+    message_payload = message_to_json(message, downloaded_file=downloaded_file)
+    manifest_file.write(json.dumps(message_payload, ensure_ascii=False))
+    manifest_file.write("\n")
+    text_file.write(message_to_text(message, downloaded_file=downloaded_file))
+    result["messages_exported"] += 1
+    return True
+
+
+def normalize_chat_reference(chat_id):
+    if chat_id is None:
+        return chat_id
+    chat_text = str(chat_id).strip()
+    if chat_text.startswith("@"):
+        return chat_text
+    if chat_text.lstrip("-").isdigit():
+        return int(chat_text)
+    return chat_text
+
+
+def resolve_start_message_id_with_bot(bot_token, chat_id):
+    send_response = send_message(bot_token, chat_id, ".")
+    if not send_response.get("ok"):
+        raise RuntimeError(
+            f"Unable to derive start message id via bot: {send_response.get('description', 'unknown error')}"
+        )
+
+    message_id = send_response.get("result", {}).get("message_id")
+    if not message_id:
+        raise RuntimeError("Unable to derive start message id via bot: missing message_id in response.")
+
+    delete_response = delete_message(bot_token, chat_id, message_id)
+    if not delete_response.get("ok"):
+        delete_error = delete_response.get("description", "unknown error")
+        # Non-fatal: we still got the message_id and can continue the download.
+        return message_id, f"Temporary message cleanup failed: {delete_error}"
+    return message_id, None
+
+
+def download_chat_content(
+    chat_id,
+    api_id,
+    api_hash,
+    session_name,
+    download_dir,
+    history_limit,
+    download_mode="auto",
+    start_message_id=None,
+    bot_token_for_start=None,
+    progress_every=50,
+    skip_media=False,
+    output_stem=None
+):
+    try:
+        from pyrogram import Client
+    except ImportError as error:
+        raise RuntimeError(
+            "Pyrofork is not installed. Run: pip install pyrofork"
+        ) from error
+
+    os.makedirs(download_dir, exist_ok=True)
+    session_dir = os.path.dirname(session_name)
+    if session_dir:
+        os.makedirs(session_dir, exist_ok=True)
+    result = {
+        "chat_id": str(chat_id),
+        "session_name": session_name,
+        "download_dir": os.path.abspath(download_dir),
+        "history_limit": history_limit,
+        "download_mode_requested": download_mode,
+        "download_mode_used": None,
+        "start_message_id": start_message_id,
+        "chat_title": None,
+        "chat_type": None,
+        "messages_scanned": 0,
+        "messages_exported": 0,
+        "media_downloaded": 0,
+        "manifest_path": None,
+        "text_path": None,
+        "errors": [],
+    }
+
+    chat_peer = normalize_chat_reference(chat_id)
+
+    with Client(session_name, api_id=int(api_id), api_hash=api_hash) as app:
+        last_progress_scanned = 0
+
+        def maybe_log_progress(current_message_id=None):
+            nonlocal last_progress_scanned
+            if not progress_every or progress_every <= 0:
+                return
+            scanned = result["messages_scanned"]
+            if scanned - last_progress_scanned < progress_every:
+                return
+            current_id_part = f", current_message_id={current_message_id}" if current_message_id is not None else ""
+            text_print(
+                f"[DOWNLOAD] Progress: scanned={result['messages_scanned']}, "
+                f"exported={result['messages_exported']}, media={result['media_downloaded']}{current_id_part}"
+            )
+            last_progress_scanned = scanned
+
+        try:
+            chat = app.get_chat(chat_peer)
+            result["chat_title"] = getattr(chat, "title", None) or getattr(chat, "first_name", None)
+            result["chat_type"] = str(getattr(chat, "type", "unknown"))
+        except Exception as chat_error:
+            result["errors"].append(f"get_chat failed: {chat_error}")
+
+        effective_stem = output_stem or build_messages_stem(result.get("chat_title"), chat_id)
+        manifest_path = os.path.join(download_dir, f"{effective_stem}.jsonl")
+        text_path = os.path.join(download_dir, f"{effective_stem}.txt")
+        result["manifest_path"] = os.path.abspath(manifest_path)
+        result["text_path"] = os.path.abspath(text_path)
+
+        with open(manifest_path, "w", encoding="utf-8") as manifest_file, open(text_path, "w", encoding="utf-8") as text_file:
+            def run_history_download():
+                history_kwargs = {"chat_id": chat_peer}
+                if history_limit and history_limit > 0:
+                    history_kwargs["limit"] = history_limit
+
+                for message in app.get_chat_history(**history_kwargs):
+                    result["messages_scanned"] += 1
+                    process_download_message(
+                        message,
+                        app,
+                        chat_peer,
+                        download_dir,
+                        manifest_file,
+                        text_file,
+                        result,
+                        skip_media=skip_media
+                    )
+                    maybe_log_progress(getattr(message, "id", None))
+
+            def run_id_scan_download(start_id):
+                current_message_id = int(start_id)
+                # If history_limit is 0, scan everything down to message_id=1.
+                target_messages = int(history_limit) if history_limit and history_limit > 0 else current_message_id
+
+                while current_message_id > 0 and result["messages_exported"] < target_messages:
+                    result["messages_scanned"] += 1
+                    message = app.get_messages(chat_peer, current_message_id)
+                    process_download_message(
+                        message,
+                        app,
+                        chat_peer,
+                        download_dir,
+                        manifest_file,
+                        text_file,
+                        result,
+                        skip_media=skip_media
+                    )
+                    maybe_log_progress(current_message_id)
+                    current_message_id -= 1
+
+            def ensure_start_id():
+                if result["start_message_id"]:
+                    return int(result["start_message_id"])
+                if bot_token_for_start:
+                    derived_id, cleanup_error = resolve_start_message_id_with_bot(bot_token_for_start, chat_id)
+                    result["start_message_id"] = int(derived_id)
+                    if cleanup_error:
+                        result["errors"].append(cleanup_error)
+                    return int(derived_id)
+                raise RuntimeError(
+                    "start message id is required for idscan mode. "
+                    "Use --download-start-id or provide a bot token so Tosint can derive it."
+                )
+
+            if download_mode == "history":
+                run_history_download()
+                result["download_mode_used"] = "history"
+            elif download_mode == "idscan":
+                run_id_scan_download(ensure_start_id())
+                result["download_mode_used"] = "idscan"
+            else:
+                try:
+                    run_history_download()
+                    result["download_mode_used"] = "history"
+                except Exception as history_error:
+                    result["errors"].append(f"history mode failed: {history_error}")
+                    run_id_scan_download(ensure_start_id())
+                    result["download_mode_used"] = "idscan"
+
+    return result
+
+
 def main():
     global TEXT_OUTPUT_ENABLED
     # Initialize the argument parser for command-line parameters
@@ -229,26 +631,49 @@ def main():
     parser.add_argument('-c', '--chat_id', type=str, help='Telegram Chat ID (-100xxx)', required=False)
     parser.add_argument('--json', action='store_true', help='Print analysis report in JSON format')
     parser.add_argument('--json-file', type=str, help='Save analysis report as JSON file')
+    parser.add_argument('--downloads', '--download', action='store_true', help='Download Telegram chat history and media using a user account session')
+    parser.add_argument('--api-id', type=str, help='Telegram API_ID for user session (Pyrofork)')
+    parser.add_argument('--api-hash', type=str, help='Telegram API_HASH for user session (Pyrofork)')
+    parser.add_argument('--session-name', type=str, default=None, help='Pyrofork session name/path. If omitted, Tosint creates a scoped session per bot+chat under sessions/')
+    parser.add_argument('--download-dir', type=str, default='downloads', help='Directory where messages/media are saved (default: downloads)')
+    parser.add_argument('--download-limit', type=int, default=0, help='Max messages to export (0 = all)')
+    parser.add_argument('--download-mode', type=str, choices=['auto', 'history', 'idscan'], default='auto', help='Download strategy: auto (history then idscan fallback), history, or idscan')
+    parser.add_argument('--download-start-id', type=int, help='Start message_id for idscan mode (latest known message id)')
+    parser.add_argument('--download-progress-every', type=int, default=50, help='Print download progress every N scanned messages (0 disables)')
+    parser.add_argument('--skip-media-download', action='store_true', help='Do not download media attachments; export only message metadata/text')
+    parser.add_argument('--env-file', type=str, default='.env', help='Env file path for API_ID/API_HASH (default: .env)')
 
     # Parse the command-line arguments
     args = parser.parse_args()
     TEXT_OUTPUT_ENABLED = not args.json
 
-    # If the token is not provided via command line, prompt the user for input
-    if args.token:
-        telegram_token = args.token.strip()
-    else:
-        telegram_token = input('Telegram Token (bot1xxx): ').strip()
+    env_values = load_env_file(args.env_file)
 
-    # If the chat ID is not provided via command line, prompt the user for input
-    if args.chat_id:
-        telegram_chat_id = args.chat_id.strip()
-    else:
-        telegram_chat_id = input('Telegram Chat ID (-100xxx): ').strip()
+    run_bot_analysis = bool(args.token) or bool(env_values.get("TELEGRAM_BOT_TOKEN")) or not args.downloads
 
-    # Remove the 'bot' prefix from the token if it exists
-    if telegram_token.startswith('bot'):
-        telegram_token = telegram_token[3:]
+    telegram_token = None
+    if run_bot_analysis:
+        telegram_token = get_value(
+            args.token,
+            env_values,
+            env_key="TELEGRAM_BOT_TOKEN",
+            prompt_text='Telegram Token (bot1xxx): '
+        )
+        if not telegram_token:
+            text_print("ATTENTION Telegram token is required for bot analysis.")
+            return
+        if telegram_token.startswith('bot'):
+            telegram_token = telegram_token[3:]
+
+    telegram_chat_id = get_value(
+        args.chat_id,
+        env_values,
+        env_key="TELEGRAM_CHAT_ID",
+        prompt_text='Telegram Chat ID or username (@channel): '
+    )
+    if not telegram_chat_id:
+        text_print("ATTENTION Telegram chat id/username is required.")
+        return
 
     report = {
         "input": {
@@ -259,10 +684,81 @@ def main():
         "chat": {},
         "invite_links": {},
         "admins": [],
+        "downloads": {},
         "errors": [],
     }
 
-    text_print(f"\nAnalysis of token: {telegram_token} and chat id: {telegram_chat_id}\n")
+    if run_bot_analysis:
+        text_print(f"\nAnalysis of token: {telegram_token} and chat id: {telegram_chat_id}")
+
+    def perform_downloads(target_download_dir, bot_token_for_start, session_name, chat_title_for_files=None):
+        if not args.downloads:
+            return
+        print_section("DOWNLOAD")
+        text_print("Starting requested download phase...")
+        text_print(f"Requested Mode: {args.download_mode}")
+        text_print(f"Session: {display_path(session_name)}")
+        text_print(f"Output Directory: {display_path(target_download_dir)}")
+        if args.skip_media_download:
+            text_print("Media download is disabled (--skip-media-download).")
+
+        api_id = get_value(
+            args.api_id,
+            env_values,
+            env_key="TELEGRAM_API_ID",
+            prompt_text="Telegram API_ID: "
+        )
+        api_hash = get_value(
+            args.api_hash,
+            env_values,
+            env_key="TELEGRAM_API_HASH",
+            prompt_text="Telegram API_HASH: "
+        )
+        if not api_id or not api_hash:
+            report["errors"].append("TELEGRAM_API_ID and TELEGRAM_API_HASH are required for --downloads.")
+            text_print("ATTENTION TELEGRAM_API_ID and TELEGRAM_API_HASH are required for --downloads.")
+        else:
+            try:
+                download_result = download_chat_content(
+                    chat_id=telegram_chat_id,
+                    api_id=api_id,
+                    api_hash=api_hash,
+                    session_name=session_name,
+                    download_dir=target_download_dir,
+                    history_limit=args.download_limit,
+                    download_mode=args.download_mode,
+                    start_message_id=args.download_start_id,
+                    bot_token_for_start=bot_token_for_start,
+                    progress_every=args.download_progress_every,
+                    skip_media=args.skip_media_download,
+                    output_stem=build_messages_stem(chat_title_for_files, telegram_chat_id)
+                )
+                report["downloads"] = download_result
+                text_print("\n[DOWNLOAD] Completed")
+                text_print(f"Requested Mode: {download_result['download_mode_requested']}")
+                text_print(f"Used Mode: {download_result['download_mode_used']}")
+                if download_result.get("start_message_id"):
+                    text_print(f"Start Message ID: {download_result['start_message_id']}")
+                text_print(f"Download Directory: {download_result['download_dir']}")
+                text_print(f"Manifest: {download_result['manifest_path']}")
+                text_print(f"Text Log: {download_result['text_path']}")
+                text_print(f"Messages Scanned: {download_result['messages_scanned']}")
+                text_print(f"Messages Exported: {download_result['messages_exported']}")
+                text_print(f"Media Downloaded: {download_result['media_downloaded']}")
+            except Exception as error:
+                report["errors"].append(f"downloads error: {error}")
+                text_print(f"ATTENTION downloads error: {error}")
+
+    if not run_bot_analysis:
+        scoped_session_name = build_scoped_session_name(args.session_name, telegram_chat_id, None)
+        perform_downloads(
+            build_bot_download_dir(args.download_dir, "unknown_bot"),
+            None,
+            scoped_session_name,
+            None
+        )
+        emit_json_report(report, args.json, args.json_file)
+        return
 
     # Get Bot Info
     telegram_get_me_response = get_bot_info(telegram_token)
@@ -270,6 +766,7 @@ def main():
 
     # If the response contains bot information, print the relevant details
     if telegram_get_me:
+        bot_username = telegram_get_me.get("username")
         print_section("BOT")
         last_error_description = None
         text_print(f"Bot First Name: {telegram_get_me['first_name']}")
@@ -404,10 +901,18 @@ def main():
             for index, chat_member in enumerate(telegram_get_chat_administrators, start=1):
                 print_admin_details(chat_member, index)
                 report["admins"].append(build_admin_json(chat_member, index))
+        scoped_session_name = build_scoped_session_name(args.session_name, telegram_chat_id, bot_username)
+        perform_downloads(
+            build_bot_download_dir(args.download_dir, bot_username),
+            telegram_token,
+            scoped_session_name,
+            telegram_get_chat.get("title")
+        )
         emit_json_report(report, args.json, args.json_file)
     else:
         text_print('Telegram token is invalid or revoked.')
         report["errors"].append("Telegram token is invalid or revoked.")
+        text_print("Download phase skipped because bot token validation failed.")
         emit_json_report(report, args.json, args.json_file)
 
 
