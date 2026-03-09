@@ -1,14 +1,15 @@
 # Tosint - Telegram OSINT Tool
 
-Tosint (Telegram OSINT) is a Python tool to analyze a Telegram bot token and a target chat ID (group/channel) using Telegram Bot API.
+Tosint is a Python-based OSINT tool for Telegram investigations.  
+It analyzes bot tokens and target chats (channels, groups, and DMs) to quickly extract actionable intelligence.
 
-It is designed for investigators, threat analysts, and security researchers who need quick visibility into Telegram entities used in phishing, malware logs, credential collection, and similar campaigns.
+Built for investigators, threat analysts, and security researchers, Tosint helps profile malicious infrastructure used in phishing, malware operations, credential theft, and related campaigns.
 
-It can also download message history and media from a channel/group/DM using a user account session via Pyrofork (MTProto).
+It can also export full chat history and media for forensic collection and offline analysis.
 
 ## Use Cases
 
-- Telegram OSINT investigations on suspicious bots/channels/groups
+- Telegram OSINT investigations on suspicious bots/channels/groups/DMs
 - Threat intelligence enrichment for phishing and malware delivery chains
 - DFIR/forensic collection of Telegram chat metadata and content
 - Telegram channel/group message export for offline analysis
