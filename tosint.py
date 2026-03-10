@@ -422,7 +422,10 @@ def process_download_message(message, app, chat_id, download_dir, manifest_file,
         return False
 
     downloaded_file = None
-    if getattr(message, "media", None) and not skip_media:
+    media_type_str = str(getattr(message, "media", "")) if getattr(message, "media", None) else ""
+    is_web_preview = "WEB_PAGE_PREVIEW" in media_type_str or "WEBPAGE" in media_type_str.upper()
+
+    if getattr(message, "media", None) and not skip_media and not is_web_preview:
         try:
             media_dir = os.path.join(download_dir, "media")
             os.makedirs(media_dir, exist_ok=True)
@@ -430,7 +433,13 @@ def process_download_message(message, app, chat_id, download_dir, manifest_file,
             downloaded_file = normalize_downloaded_media_path(downloaded_file, message)
             if downloaded_file:
                 result["media_downloaded"] += 1
+            else:
+                result["media_failed"] += 1
+                result["errors"].append(
+                    f"message_id={getattr(message, 'id', None)} download returned no file path"
+                )
         except Exception as download_error:
+            result["media_failed"] += 1
             result["errors"].append(
                 f"message_id={getattr(message, 'id', None)} download error: {download_error}"
             )
@@ -483,6 +492,8 @@ def download_chat_content(
     download_mode="auto",
     start_message_id=None,
     bot_token_for_start=None,
+    bot_token_for_auth=None,
+    download_auth_mode="auto",
     progress_every=50,
     skip_media=False,
     output_stem=None
@@ -511,6 +522,7 @@ def download_chat_content(
         "messages_scanned": 0,
         "messages_exported": 0,
         "media_downloaded": 0,
+        "media_failed": 0,
         "manifest_path": None,
         "text_path": None,
         "errors": [],
@@ -518,7 +530,16 @@ def download_chat_content(
 
     chat_peer = normalize_chat_reference(chat_id)
 
-    with Client(session_name, api_id=int(api_id), api_hash=api_hash) as app:
+    client_kwargs = {
+        "api_id": int(api_id),
+        "api_hash": api_hash,
+    }
+    if download_auth_mode == "bot":
+        if not bot_token_for_auth:
+            raise RuntimeError("download auth mode 'bot' requires a valid bot token.")
+        client_kwargs["bot_token"] = bot_token_for_auth
+
+    with Client(session_name, **client_kwargs) as app:
         last_progress_scanned = 0
 
         def maybe_log_progress(current_message_id=None):
@@ -531,7 +552,8 @@ def download_chat_content(
             current_id_part = f", current_message_id={current_message_id}" if current_message_id is not None else ""
             text_print(
                 f"[DOWNLOAD] Progress: scanned={result['messages_scanned']}, "
-                f"exported={result['messages_exported']}, media={result['media_downloaded']}{current_id_part}"
+                f"exported={result['messages_exported']}, media={result['media_downloaded']}, "
+                f"media_failed={result['media_failed']}{current_id_part}"
             )
             last_progress_scanned = scanned
 
@@ -627,7 +649,7 @@ def main():
     parser = argparse.ArgumentParser(description='OSINT analysis for Telegram bots.')
 
     # Add options for token and chat ID
-    parser.add_argument('-t', '--token', type=str, help='Telegram Token (bot1xxx)', required=False)
+    parser.add_argument('-t', '--token', type=str, help='Telegram Token (bot1xxx)', required=True)
     parser.add_argument('-c', '--chat_id', type=str, help='Telegram Chat ID (-100xxx)', required=False)
     parser.add_argument('--json', action='store_true', help='Print analysis report in JSON format')
     parser.add_argument('--json-file', type=str, help='Save analysis report as JSON file')
@@ -638,6 +660,7 @@ def main():
     parser.add_argument('--download-dir', type=str, default='downloads', help='Directory where messages/media are saved (default: downloads)')
     parser.add_argument('--download-limit', type=int, default=0, help='Max messages to export (0 = all)')
     parser.add_argument('--download-mode', type=str, choices=['auto', 'history', 'idscan'], default='auto', help='Download strategy: auto (history then idscan fallback), history, or idscan')
+    parser.add_argument('--download-auth', type=str, choices=['bot', 'user'], default='bot', help='Download auth mode: bot (default, uses -t token) or user (interactive login)')
     parser.add_argument('--download-start-id', type=int, help='Start message_id for idscan mode (latest known message id)')
     parser.add_argument('--download-progress-every', type=int, default=50, help='Print download progress every N scanned messages (0 disables)')
     parser.add_argument('--skip-media-download', action='store_true', help='Do not download media attachments; export only message metadata/text')
@@ -648,31 +671,34 @@ def main():
     TEXT_OUTPUT_ENABLED = not args.json
 
     env_values = load_env_file(args.env_file)
+    # Only API credentials are read from .env by design.
+    env_values = {
+        "TELEGRAM_API_ID": env_values.get("TELEGRAM_API_ID"),
+        "TELEGRAM_API_HASH": env_values.get("TELEGRAM_API_HASH"),
+    }
 
-    run_bot_analysis = bool(args.token) or bool(env_values.get("TELEGRAM_BOT_TOKEN")) or not args.downloads
+    run_bot_analysis = True
 
-    telegram_token = None
-    if run_bot_analysis:
-        telegram_token = get_value(
-            args.token,
-            env_values,
-            env_key="TELEGRAM_BOT_TOKEN",
-            prompt_text='Telegram Token (bot1xxx): '
-        )
-        if not telegram_token:
-            text_print("ATTENTION Telegram token is required for bot analysis.")
-            return
-        if telegram_token.startswith('bot'):
-            telegram_token = telegram_token[3:]
+    telegram_token = get_value(
+        args.token,
+        env_values,
+        env_key=None,
+        prompt_text=None
+    )
+    if not telegram_token:
+        text_print("ATTENTION Telegram token is required.")
+        return
+    if telegram_token.startswith('bot'):
+        telegram_token = telegram_token[3:]
 
     telegram_chat_id = get_value(
         args.chat_id,
         env_values,
-        env_key="TELEGRAM_CHAT_ID",
-        prompt_text='Telegram Chat ID or username (@channel): '
+        env_key=None,
+        prompt_text=None
     )
-    if not telegram_chat_id:
-        text_print("ATTENTION Telegram chat id/username is required.")
+    if args.downloads and not telegram_chat_id:
+        text_print("ATTENTION Telegram chat id/username is required when using --downloads.")
         return
 
     report = {
@@ -689,14 +715,24 @@ def main():
     }
 
     if run_bot_analysis:
-        text_print(f"\nAnalysis of token: {telegram_token} and chat id: {telegram_chat_id}")
+        if telegram_chat_id:
+            text_print(f"\nAnalysis of token: {telegram_token} and chat id: {telegram_chat_id}")
+        else:
+            text_print(f"\nAnalysis of token: {telegram_token}")
 
     def perform_downloads(target_download_dir, bot_token_for_start, session_name, chat_title_for_files=None):
         if not args.downloads:
             return
+        resolved_download_auth = args.download_auth
+        if resolved_download_auth == "bot" and not bot_token_for_start:
+            report["errors"].append("download auth mode 'bot' requires a valid bot token.")
+            text_print("ATTENTION download auth mode 'bot' requires a valid bot token.")
+            return
+
         print_section("DOWNLOAD")
         text_print("Starting requested download phase...")
         text_print(f"Requested Mode: {args.download_mode}")
+        text_print(f"Auth Mode: {resolved_download_auth}")
         text_print(f"Session: {display_path(session_name)}")
         text_print(f"Output Directory: {display_path(target_download_dir)}")
         if args.skip_media_download:
@@ -729,6 +765,8 @@ def main():
                     download_mode=args.download_mode,
                     start_message_id=args.download_start_id,
                     bot_token_for_start=bot_token_for_start,
+                    bot_token_for_auth=bot_token_for_start,
+                    download_auth_mode=resolved_download_auth,
                     progress_every=args.download_progress_every,
                     skip_media=args.skip_media_download,
                     output_stem=build_messages_stem(chat_title_for_files, telegram_chat_id)
@@ -745,20 +783,10 @@ def main():
                 text_print(f"Messages Scanned: {download_result['messages_scanned']}")
                 text_print(f"Messages Exported: {download_result['messages_exported']}")
                 text_print(f"Media Downloaded: {download_result['media_downloaded']}")
+                text_print(f"Media Failed: {download_result['media_failed']}")
             except Exception as error:
                 report["errors"].append(f"downloads error: {error}")
                 text_print(f"ATTENTION downloads error: {error}")
-
-    if not run_bot_analysis:
-        scoped_session_name = build_scoped_session_name(args.session_name, telegram_chat_id, None)
-        perform_downloads(
-            build_bot_download_dir(args.download_dir, "unknown_bot"),
-            None,
-            scoped_session_name,
-            None
-        )
-        emit_json_report(report, args.json, args.json_file)
-        return
 
     # Get Bot Info
     telegram_get_me_response = get_bot_info(telegram_token)
@@ -827,6 +855,12 @@ def main():
                 text_print(f"ATTENTION {error_description}")
             last_error_description = error_description
             report["errors"].append(error_description)
+
+        if not telegram_chat_id:
+            text_print("\n[CHAT]")
+            text_print("Chat ID not provided. Skipping chat and admins analysis.")
+            emit_json_report(report, args.json, args.json_file)
+            return
 
         # Get Chat Info
 

@@ -93,8 +93,7 @@ pip install -r requirements.txt
 
 To use MTProto download features (`--downloads`), you need your Telegram `API_ID` and `API_HASH`.
 
-Follow the official Telegram guide:
-[Obtaining api_id](https://core.telegram.org/api/obtaining_api_id)
+Follow the official [Telegram guide](https://core.telegram.org/api/obtaining_api_id).
 
 For convenience, you can save these values in a local `.env` file (faster repeated analysis), or skip `.env` and enter them interactively at runtime.
 
@@ -119,6 +118,12 @@ python3 tosint.py
 python3 tosint.py -t <TELEGRAM_BOT_TOKEN> -c <TELEGRAM_CHAT_ID>
 ```
 
+### Bot-only preliminary analysis (no chat context)
+
+```bash
+python3 tosint.py -t <TELEGRAM_BOT_TOKEN>
+```
+
 ### JSON only (stdout)
 
 ```bash
@@ -139,17 +144,22 @@ python3 tosint.py -t <TELEGRAM_BOT_TOKEN> -c <TELEGRAM_CHAT_ID> --downloads
 
 This uses `--download-mode auto` by default:
 - first tries MTProto history (`get_chat_history`)
-- if that fails (for example `PEER_ID_INVALID`), it falls back to ID scan (`get_messages` by `message_id`) similarly to TeleTracker.
+- if that fails (for example `PEER_ID_INVALID`), it falls back to ID scan (`get_messages` by `message_id`).
 - output is saved under `downloads/<bot_username>/` with:
   - `messages_<chat_title_sanitized>.jsonl` (structured JSON lines)
   - `messages_<chat_title_sanitized>.txt` (human-readable text log)
   - `media/` (downloaded attachments when media download is enabled)
 
+### Download authentication modes (`--download-auth`)
+
+- `bot` (default): uses the bot token provided with `-t/--token` for the download session.
+- `user`: forces user authentication and shows Pyrogram login prompt (phone number or QR code flow).
+
 
 ### Options
 
-- `-t`, `--token`: Telegram bot token (with or without `bot` prefix)
-- `-c`, `--chat_id`: Telegram chat ID (e.g. `-100...` for channels/supergroups)
+- `-t`, `--token`: Telegram bot token (with or without `bot` prefix) **required**
+- `-c`, `--chat_id`: Telegram chat ID (e.g. `-100...` for channels/supergroups). Required for chat/admin analysis and `--downloads`
 - `--json`: print JSON report only
 - `--json-file`: save JSON report to chosen path
 - `--downloads` (`--download` alias): download messages/media
@@ -159,6 +169,7 @@ This uses `--download-mode auto` by default:
 - `--download-dir`: target folder for downloaded content (default: `downloads`)
 - `--download-limit`: max messages to export (`0` = all)
 - `--download-mode`: `auto`, `history`, `idscan` (default: `auto`)
+- `--download-auth`: `bot`, `user` (default: `bot`)
 - `--download-start-id`: start `message_id` for `idscan` mode
 - `--download-progress-every`: print progress every N scanned messages (`0` disables, default: `50`)
 - `--skip-media-download`: skip attachment files and export only message metadata/text
