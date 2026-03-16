@@ -14,6 +14,12 @@ It can also export full chat history and media for forensic collection and offli
 - DFIR/forensic collection of Telegram chat metadata and content
 - Telegram channel/group message export for offline analysis
 
+## Legal and Ethical Use
+
+Tosint is intended for lawful investigative, research, DFIR, and threat intelligence activities.
+
+You must not use this tool for illegal activities, unauthorized access, or any operation that violates Telegram's Terms of Service or the laws applicable in your jurisdiction.
+
 ## Telegram OSINT Data Extracted
 
 ### Bot Intelligence
@@ -270,6 +276,7 @@ Administrators in the chat:
 - [TeleTracker](https://github.com/tsale/TeleTracker/)
 - [telegram-scraper](https://github.com/unnohwn/telegram-scraper)
 - [telegram-scraper DarkWebInformer](https://github.com/DarkWebInformer/telegram-scraper)
+- [Matkap](https://github.com/0x6rss/matkap)
 
 ## Operational and Forensic Notes
 

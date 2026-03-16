@@ -285,6 +285,9 @@ def message_to_json(message, downloaded_file=None):
     if getattr(message, "media", None):
         media_type = str(message.media)
 
+    if downloaded_file:
+        downloaded_file = display_path(downloaded_file)
+
     return {
         "message_id": getattr(message, "id", None),
         "date": date_value,
@@ -307,6 +310,9 @@ def message_to_text(message, downloaded_file=None):
     media_type = str(getattr(message, "media", "")) if getattr(message, "media", None) else ""
     text_value = getattr(message, "text", None) or ""
     caption_value = getattr(message, "caption", None) or ""
+    if downloaded_file:
+        downloaded_file = display_path(downloaded_file)
+
     lines = []
     message_id = getattr(message, "id", None)
     if message_id is not None:
@@ -512,7 +518,7 @@ def download_chat_content(
     result = {
         "chat_id": str(chat_id),
         "session_name": session_name,
-        "download_dir": os.path.abspath(download_dir),
+        "download_dir": display_path(download_dir),
         "history_limit": history_limit,
         "download_mode_requested": download_mode,
         "download_mode_used": None,
@@ -523,6 +529,7 @@ def download_chat_content(
         "messages_exported": 0,
         "media_downloaded": 0,
         "media_failed": 0,
+        "interrupted": False,
         "manifest_path": None,
         "text_path": None,
         "errors": [],
@@ -539,106 +546,110 @@ def download_chat_content(
             raise RuntimeError("download auth mode 'bot' requires a valid bot token.")
         client_kwargs["bot_token"] = bot_token_for_auth
 
-    with Client(session_name, **client_kwargs) as app:
-        last_progress_scanned = 0
+    try:
+        with Client(session_name, **client_kwargs) as app:
+            last_progress_scanned = 0
 
-        def maybe_log_progress(current_message_id=None):
-            nonlocal last_progress_scanned
-            if not progress_every or progress_every <= 0:
-                return
-            scanned = result["messages_scanned"]
-            if scanned - last_progress_scanned < progress_every:
-                return
-            current_id_part = f", current_message_id={current_message_id}" if current_message_id is not None else ""
-            text_print(
-                f"[DOWNLOAD] Progress: scanned={result['messages_scanned']}, "
-                f"exported={result['messages_exported']}, media={result['media_downloaded']}, "
-                f"media_failed={result['media_failed']}{current_id_part}"
-            )
-            last_progress_scanned = scanned
-
-        try:
-            chat = app.get_chat(chat_peer)
-            result["chat_title"] = getattr(chat, "title", None) or getattr(chat, "first_name", None)
-            result["chat_type"] = str(getattr(chat, "type", "unknown"))
-        except Exception as chat_error:
-            result["errors"].append(f"get_chat failed: {chat_error}")
-
-        effective_stem = output_stem or build_messages_stem(result.get("chat_title"), chat_id)
-        manifest_path = os.path.join(download_dir, f"{effective_stem}.jsonl")
-        text_path = os.path.join(download_dir, f"{effective_stem}.txt")
-        result["manifest_path"] = os.path.abspath(manifest_path)
-        result["text_path"] = os.path.abspath(text_path)
-
-        with open(manifest_path, "w", encoding="utf-8") as manifest_file, open(text_path, "w", encoding="utf-8") as text_file:
-            def run_history_download():
-                history_kwargs = {"chat_id": chat_peer}
-                if history_limit and history_limit > 0:
-                    history_kwargs["limit"] = history_limit
-
-                for message in app.get_chat_history(**history_kwargs):
-                    result["messages_scanned"] += 1
-                    process_download_message(
-                        message,
-                        app,
-                        chat_peer,
-                        download_dir,
-                        manifest_file,
-                        text_file,
-                        result,
-                        skip_media=skip_media
-                    )
-                    maybe_log_progress(getattr(message, "id", None))
-
-            def run_id_scan_download(start_id):
-                current_message_id = int(start_id)
-                # If history_limit is 0, scan everything down to message_id=1.
-                target_messages = int(history_limit) if history_limit and history_limit > 0 else current_message_id
-
-                while current_message_id > 0 and result["messages_exported"] < target_messages:
-                    result["messages_scanned"] += 1
-                    message = app.get_messages(chat_peer, current_message_id)
-                    process_download_message(
-                        message,
-                        app,
-                        chat_peer,
-                        download_dir,
-                        manifest_file,
-                        text_file,
-                        result,
-                        skip_media=skip_media
-                    )
-                    maybe_log_progress(current_message_id)
-                    current_message_id -= 1
-
-            def ensure_start_id():
-                if result["start_message_id"]:
-                    return int(result["start_message_id"])
-                if bot_token_for_start:
-                    derived_id, cleanup_error = resolve_start_message_id_with_bot(bot_token_for_start, chat_id)
-                    result["start_message_id"] = int(derived_id)
-                    if cleanup_error:
-                        result["errors"].append(cleanup_error)
-                    return int(derived_id)
-                raise RuntimeError(
-                    "start message id is required for idscan mode. "
-                    "Use --download-start-id or provide a bot token so Tosint can derive it."
+            def maybe_log_progress(current_message_id=None):
+                nonlocal last_progress_scanned
+                if not progress_every or progress_every <= 0:
+                    return
+                scanned = result["messages_scanned"]
+                if scanned - last_progress_scanned < progress_every:
+                    return
+                current_id_part = f", current_message_id={current_message_id}" if current_message_id is not None else ""
+                text_print(
+                    f"[DOWNLOAD] Progress: scanned={result['messages_scanned']}, "
+                    f"exported={result['messages_exported']}, media={result['media_downloaded']}, "
+                    f"media_failed={result['media_failed']}{current_id_part}"
                 )
+                last_progress_scanned = scanned
 
-            if download_mode == "history":
-                run_history_download()
-                result["download_mode_used"] = "history"
-            elif download_mode == "idscan":
-                run_id_scan_download(ensure_start_id())
-                result["download_mode_used"] = "idscan"
-            else:
-                try:
+            try:
+                chat = app.get_chat(chat_peer)
+                result["chat_title"] = getattr(chat, "title", None) or getattr(chat, "first_name", None)
+                result["chat_type"] = str(getattr(chat, "type", "unknown"))
+            except Exception as chat_error:
+                result["errors"].append(f"get_chat failed: {chat_error}")
+
+            effective_stem = output_stem or build_messages_stem(result.get("chat_title"), chat_id)
+            manifest_path = os.path.join(download_dir, f"{effective_stem}.jsonl")
+            text_path = os.path.join(download_dir, f"{effective_stem}.txt")
+            result["manifest_path"] = display_path(manifest_path)
+            result["text_path"] = display_path(text_path)
+
+            with open(manifest_path, "w", encoding="utf-8") as manifest_file, open(text_path, "w", encoding="utf-8") as text_file:
+                def run_history_download():
+                    history_kwargs = {"chat_id": chat_peer}
+                    if history_limit and history_limit > 0:
+                        history_kwargs["limit"] = history_limit
+
+                    for message in app.get_chat_history(**history_kwargs):
+                        result["messages_scanned"] += 1
+                        process_download_message(
+                            message,
+                            app,
+                            chat_peer,
+                            download_dir,
+                            manifest_file,
+                            text_file,
+                            result,
+                            skip_media=skip_media
+                        )
+                        maybe_log_progress(getattr(message, "id", None))
+
+                def run_id_scan_download(start_id):
+                    current_message_id = int(start_id)
+                    # If history_limit is 0, scan everything down to message_id=1.
+                    target_messages = int(history_limit) if history_limit and history_limit > 0 else current_message_id
+
+                    while current_message_id > 0 and result["messages_exported"] < target_messages:
+                        result["messages_scanned"] += 1
+                        message = app.get_messages(chat_peer, current_message_id)
+                        process_download_message(
+                            message,
+                            app,
+                            chat_peer,
+                            download_dir,
+                            manifest_file,
+                            text_file,
+                            result,
+                            skip_media=skip_media
+                        )
+                        maybe_log_progress(current_message_id)
+                        current_message_id -= 1
+
+                def ensure_start_id():
+                    if result["start_message_id"]:
+                        return int(result["start_message_id"])
+                    if bot_token_for_start:
+                        derived_id, cleanup_error = resolve_start_message_id_with_bot(bot_token_for_start, chat_id)
+                        result["start_message_id"] = int(derived_id)
+                        if cleanup_error:
+                            result["errors"].append(cleanup_error)
+                        return int(derived_id)
+                    raise RuntimeError(
+                        "start message id is required for idscan mode. "
+                        "Use --download-start-id or provide a bot token so Tosint can derive it."
+                    )
+
+                if download_mode == "history":
                     run_history_download()
                     result["download_mode_used"] = "history"
-                except Exception as history_error:
-                    result["errors"].append(f"history mode failed: {history_error}")
+                elif download_mode == "idscan":
                     run_id_scan_download(ensure_start_id())
                     result["download_mode_used"] = "idscan"
+                else:
+                    try:
+                        run_history_download()
+                        result["download_mode_used"] = "history"
+                    except Exception as history_error:
+                        result["errors"].append(f"history mode failed: {history_error}")
+                        run_id_scan_download(ensure_start_id())
+                        result["download_mode_used"] = "idscan"
+    except KeyboardInterrupt:
+        result["interrupted"] = True
+        result["errors"].append("download interrupted by user")
 
     return result
 
@@ -772,14 +783,17 @@ def main():
                     output_stem=build_messages_stem(chat_title_for_files, telegram_chat_id)
                 )
                 report["downloads"] = download_result
-                text_print("\n[DOWNLOAD] Completed")
+                if download_result.get("interrupted"):
+                    text_print("\n[DOWNLOAD] Interrupted by user")
+                else:
+                    text_print("\n[DOWNLOAD] Completed")
                 text_print(f"Requested Mode: {download_result['download_mode_requested']}")
                 text_print(f"Used Mode: {download_result['download_mode_used']}")
                 if download_result.get("start_message_id"):
                     text_print(f"Start Message ID: {download_result['start_message_id']}")
-                text_print(f"Download Directory: {download_result['download_dir']}")
-                text_print(f"Manifest: {download_result['manifest_path']}")
-                text_print(f"Text Log: {download_result['text_path']}")
+                text_print(f"Download Directory: {display_path(download_result['download_dir'])}")
+                text_print(f"Manifest: {display_path(download_result['manifest_path'])}")
+                text_print(f"Text Log: {display_path(download_result['text_path'])}")
                 text_print(f"Messages Scanned: {download_result['messages_scanned']}")
                 text_print(f"Messages Exported: {download_result['messages_exported']}")
                 text_print(f"Media Downloaded: {download_result['media_downloaded']}")
