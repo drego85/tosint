@@ -404,6 +404,26 @@ def infer_media_extension(message):
     return None
 
 
+def infer_media_filename(message):
+    for attr in ("document", "audio", "video", "animation"):
+        media_obj = getattr(message, attr, None)
+        if media_obj and getattr(media_obj, "file_name", None):
+            return media_obj.file_name
+
+    message_id = getattr(message, "id", "unknown")
+    inferred_ext = infer_media_extension(message) or ""
+    return f"media_{message_id}{inferred_ext}"
+
+
+def build_unique_media_target(message, media_dir):
+    original_name = infer_media_filename(message)
+    base_name = sanitize_path_segment(original_name)
+    stem, ext = os.path.splitext(base_name)
+    message_id = getattr(message, "id", "unknown")
+    unique_name = f"{message_id}_{stem}{ext}"
+    return os.path.join(media_dir, unique_name)
+
+
 def normalize_downloaded_media_path(downloaded_file, message):
     if not downloaded_file:
         return downloaded_file
@@ -435,7 +455,8 @@ def process_download_message(message, app, chat_id, download_dir, manifest_file,
         try:
             media_dir = os.path.join(download_dir, "media")
             os.makedirs(media_dir, exist_ok=True)
-            downloaded_file = app.download_media(message, file_name=ensure_dir_path(media_dir))
+            target_file = build_unique_media_target(message, media_dir)
+            downloaded_file = app.download_media(message, file_name=target_file)
             downloaded_file = normalize_downloaded_media_path(downloaded_file, message)
             if downloaded_file:
                 result["media_downloaded"] += 1
