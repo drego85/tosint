@@ -161,6 +161,17 @@ This uses `--download-mode auto` by default:
 - `bot` (default): uses the bot token provided with `-t/--token` for the download session.
 - `user`: forces user authentication and shows Pyrogram login prompt (phone number or QR code flow).
 
+### Download overwrite modes (`--download-overwrite`)
+
+- `ask` (default): if the target download directory already exists and is not empty, Tosint asks whether to continue.
+- `always`: continue without prompting and reuse the existing directory.
+- `never`: skip the download when the target directory already exists and is not empty.
+
+Example:
+
+```bash
+python3 tosint.py -t <TELEGRAM_BOT_TOKEN> -c <TELEGRAM_CHAT_ID> --downloads --download-overwrite always
+```
 
 ### Options
 
@@ -173,6 +184,7 @@ This uses `--download-mode auto` by default:
 - `--api-hash`: Telegram API hash (used by `--downloads`)
 - `--session-name`: Pyrofork session name/path override. If omitted, Tosint auto-creates a scoped session under `sessions/<bot>_<chat>/tosint_user`
 - `--download-dir`: target folder for downloaded content (default: `downloads`)
+- `--download-overwrite`: overwrite policy for an existing non-empty download directory: `ask`, `always`, or `never` (default: `ask`)
 - `--download-limit`: max messages to export (`0` = all)
 - `--download-mode`: `auto`, `history`, `idscan` (default: `auto`)
 - `--download-auth`: `bot`, `user` (default: `bot`)

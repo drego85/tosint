@@ -366,6 +366,10 @@ def build_scoped_session_name(cli_session_name, chat_id, bot_username=None):
     return os.path.join("sessions", f"{bot_segment}_{chat_segment}", "tosint_user")
 
 
+def should_confirm_overwrite(path_value):
+    return os.path.isdir(path_value) and bool(os.listdir(path_value))
+
+
 def display_path(path_value):
     try:
         return os.path.relpath(path_value, os.getcwd())
@@ -685,11 +689,12 @@ def main():
     parser.add_argument('-c', '--chat_id', type=str, help='Telegram Chat ID (-100xxx)', required=False)
     parser.add_argument('--json', action='store_true', help='Print analysis report in JSON format')
     parser.add_argument('--json-file', type=str, help='Save analysis report as JSON file')
-    parser.add_argument('--downloads', '--download', action='store_true', help='Download Telegram chat history and media using a user account session')
+    parser.add_argument('--downloads', '--download', action='store_true', help='Download Telegram chat history and media')
     parser.add_argument('--api-id', type=str, help='Telegram API_ID for user session (Pyrofork)')
     parser.add_argument('--api-hash', type=str, help='Telegram API_HASH for user session (Pyrofork)')
     parser.add_argument('--session-name', type=str, default=None, help='Pyrofork session name/path. If omitted, Tosint creates a scoped session per bot+chat under sessions/')
     parser.add_argument('--download-dir', type=str, default='downloads', help='Directory where messages/media are saved (default: downloads)')
+    parser.add_argument('--download-overwrite', choices=['ask', 'always', 'never'], default='ask', help='How to handle an existing non-empty download directory: ask, always, or never (default: ask)')
     parser.add_argument('--download-limit', type=int, default=0, help='Max messages to export (0 = all)')
     parser.add_argument('--download-mode', type=str, choices=['auto', 'history', 'idscan'], default='auto', help='Download strategy: auto (history then idscan fallback), history, or idscan')
     parser.add_argument('--download-auth', type=str, choices=['bot', 'user'], default='bot', help='Download auth mode: bot (default, uses -t token) or user (interactive login)')
@@ -760,6 +765,20 @@ def main():
             report["errors"].append("download auth mode 'bot' requires a valid bot token.")
             text_print("ATTENTION download auth mode 'bot' requires a valid bot token.")
             return
+        if should_confirm_overwrite(target_download_dir):
+            text_print(
+                f"ATTENTION Existing download data found in: {display_path(target_download_dir)}"
+            )
+            if args.download_overwrite == "never":
+                text_print("Download phase skipped because --download-overwrite is set to never.")
+                report["errors"].append("download skipped because output directory already existed and overwrite policy was set to never")
+                return
+            if args.download_overwrite == "ask":
+                confirmation = input("Do you want to continue and overwrite previously exported files? (y/N): ").strip().lower()
+                if confirmation != "y":
+                    text_print("Download phase skipped by user.")
+                    report["errors"].append("download skipped by user because output directory already existed")
+                    return
 
         print_section("DOWNLOAD")
         text_print("Starting requested download phase...")
