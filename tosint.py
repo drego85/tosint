@@ -414,9 +414,8 @@ def infer_media_filename(message):
         if media_obj and getattr(media_obj, "file_name", None):
             return media_obj.file_name
 
-    message_id = getattr(message, "id", "unknown")
     inferred_ext = infer_media_extension(message) or ""
-    return f"media_{message_id}{inferred_ext}"
+    return f"media{inferred_ext}"
 
 
 def build_unique_media_target(message, media_dir):
