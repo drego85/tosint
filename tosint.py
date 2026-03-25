@@ -452,9 +452,11 @@ def process_download_message(message, app, chat_id, download_dir, manifest_file,
 
     downloaded_file = None
     media_type_str = str(getattr(message, "media", "")) if getattr(message, "media", None) else ""
-    is_web_preview = "WEB_PAGE_PREVIEW" in media_type_str or "WEBPAGE" in media_type_str.upper()
+    media_type_upper = media_type_str.upper()
+    is_web_preview = "WEB_PAGE_PREVIEW" in media_type_str or "WEBPAGE" in media_type_upper
+    is_dice = "DICE" in media_type_upper
 
-    if getattr(message, "media", None) and not skip_media and not is_web_preview:
+    if getattr(message, "media", None) and not skip_media and not is_web_preview and not is_dice:
         try:
             media_dir = os.path.join(download_dir, "media")
             os.makedirs(media_dir, exist_ok=True)
