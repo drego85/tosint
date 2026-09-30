@@ -4,10 +4,20 @@ import json
 import requests
 import argparse
 import mimetypes
+import sys
+import hashlib
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 
 TEXT_OUTPUT_ENABLED = True
+HTTP_TIMEOUT = (10, 30)
+DOWNLOADABLE_MEDIA_TYPES = frozenset({
+    "photo", "video", "document", "audio", "voice", "video_note",
+})
+
+
+class TelegramAPIError(RuntimeError):
+    """A Bot API request failed before a usable Telegram response was received."""
 
 
 def text_print(*args, **kwargs):
@@ -51,12 +61,12 @@ def print_chat_summary(chat):
     if "description" in chat and chat["description"] is not None:
         text_print(f"Chat Description: {normalize_single_line(chat['description'])}")
     print_field(chat, "is_forum", "Chat Is Forum")
-    print_field(chat, "is_direct_messages", "Chat Is Direct Messages")
-    print_field(chat, "has_visible_history", "Chat Has Visible History")
-    print_field(chat, "has_hidden_members", "Chat Has Hidden Members")
+    print_field(chat, "is_direct_messages", "Chat Is Channel Direct Messages")
+    print_field(chat, "has_visible_history", "Chat History Visible To New Members")
+    print_field(chat, "has_hidden_members", "Chat Member List Hidden From Non-Administrators")
     print_field(chat, "has_protected_content", "Chat Has Protected Content")
-    print_field(chat, "join_to_send_messages", "Join Required To Send")
-    print_field(chat, "join_by_request", "Join Requires Admin Approval")
+    print_field(chat, "join_to_send_messages", "Membership Required To Send Messages")
+    print_field(chat, "join_by_request", "Direct Join Requires Admin Approval (without invite link)")
     print_field(chat, "slow_mode_delay", "Slow Mode Delay (s)")
     print_field(chat, "message_auto_delete_time", "Message Auto Delete Time (s)")
     print_field(chat, "linked_chat_id", "Linked Chat ID")
@@ -64,17 +74,17 @@ def print_chat_summary(chat):
         text_print(f"Chat Location: {format_output_value(chat['location'])}")
 
     if "permissions" in chat and chat["permissions"]:
-        text_print(f"Default Chat Permissions: {format_output_value(chat['permissions'])}")
+        text_print(f"Default Chat Member Permissions: {format_output_value(chat['permissions'])}")
 
     if "pinned_message" in chat and chat["pinned_message"]:
         pinned = chat["pinned_message"]
-        text_print("Pinned Message:")
+        text_print("Most Recent Pinned Message (by send date):")
         print_field(pinned, "message_id", "  Message ID")
-        print_field(pinned, "date", "  Date (unix)")
+        print_field(pinned, "date", "  Sent Date (Unix timestamp)")
         print_field(pinned, "author_signature", "  Author Signature")
         print_field(pinned, "text", "  Text")
         if "from" in pinned and pinned["from"]:
-            text_print(f"  From: {pinned['from']}")
+            text_print(f"  Sender User: {format_output_value(pinned['from'])}")
         if "sender_chat" in pinned and pinned["sender_chat"]:
             text_print(f"  Sender Chat: {pinned['sender_chat']}")
 
@@ -122,23 +132,55 @@ def print_admin_details(chat_member, index):
     print_field(user, "id", "  User ID")
     print_field(user, "username", "  Username")
     print_field(user, "is_bot", "  Is Bot")
-    print_field(chat_member, "status", "  Status")
+    print_field(chat_member, "status", "  Chat Membership Status")
     print_field(chat_member, "custom_title", "  Custom Title")
     permissions = extract_admin_permissions(chat_member)
     if permissions:
-        text_print(f"  Permissions: {format_output_value(permissions)}")
+        text_print(f"  Administrator Rights and Attributes: {format_output_value(permissions)}")
+
+
+def telegram_api_request(token, method, http_method="GET", params=None, data=None):
+    url = f"https://api.telegram.org/bot{token}/{method}"
+    try:
+        response = requests.request(http_method, url, params=params, data=data,
+                                    timeout=HTTP_TIMEOUT, allow_redirects=False)
+    except requests.Timeout:
+        raise TelegramAPIError(f"{method}: request timed out (connection: 10s, read: 30s).") from None
+    except requests.RequestException:
+        # Requests exceptions can include the URL, which contains the bot token.
+        raise TelegramAPIError(f"{method}: connection or transport error contacting Telegram.") from None
+
+    if response.status_code == 429:
+        try:
+            retry_after = response.json().get("parameters", {}).get("retry_after")
+        except (ValueError, AttributeError, TypeError):
+            retry_after = None
+        wait_info = f" Retry after {retry_after} seconds." if isinstance(retry_after, int) else ""
+        raise TelegramAPIError(f"{method}: Telegram rate limit exceeded (HTTP 429).{wait_info}")
+    if response.status_code >= 500:
+        raise TelegramAPIError(f"{method}: Telegram server error (HTTP {response.status_code}).")
+
+    try:
+        payload = response.json()
+    except ValueError:
+        raise TelegramAPIError(f"{method}: invalid JSON response (HTTP {response.status_code}).") from None
+    if not isinstance(payload, dict) or not isinstance(payload.get("ok"), bool):
+        raise TelegramAPIError(f"{method}: unexpected Telegram response (HTTP {response.status_code}).")
+    if not 200 <= response.status_code < 300 and payload["ok"]:
+        raise TelegramAPIError(f"{method}: unexpected HTTP status {response.status_code}.")
+    if payload["ok"] and "result" not in payload:
+        raise TelegramAPIError(f"{method}: Telegram response is missing its result.")
+    if not payload["ok"] and not isinstance(payload.get("description"), str):
+        raise TelegramAPIError(f"{method}: Telegram error response is missing its description.")
+    return payload
 
 
 def telegram_api_get(token, method, params=None):
-    url = f"https://api.telegram.org/bot{token}/{method}"
-    response = requests.get(url, params=params)
-    return response.json()
+    return telegram_api_request(token, method, params=params)
 
 
 def telegram_api_post(token, method, data=None):
-    url = f"https://api.telegram.org/bot{token}/{method}"
-    response = requests.post(url, data=data)
-    return response.json()
+    return telegram_api_request(token, method, http_method="POST", data=data)
 
 
 def get_bot_info(token):
@@ -151,6 +193,62 @@ def get_bot_description(token):
 
 def get_bot_short_description(token):
     return telegram_api_get(token, "getMyShortDescription")
+
+
+def get_webhook_info(token):
+    return telegram_api_get(token, "getWebhookInfo")
+
+
+def get_bot_commands(token):
+    return telegram_api_get(token, "getMyCommands")
+
+
+def get_bot_menu_button(token):
+    return telegram_api_get(token, "getChatMenuButton")
+
+
+def enrich_bot_info(token, report):
+    for method, fetch, key, expected_type in (
+        ("getWebhookInfo", get_webhook_info, "webhook", dict),
+        ("getMyCommands", get_bot_commands, "commands", list),
+        ("getChatMenuButton", get_bot_menu_button, "menu_button", dict),
+    ):
+        try:
+            response = fetch(token)
+            if not response.get("ok"):
+                raise TelegramAPIError(f"{method}: {response.get('description', 'Unknown Telegram API error')}")
+            value = response.get("result")
+            if not isinstance(value, expected_type):
+                raise TelegramAPIError(f"{method}: unexpected result format.")
+        except TelegramAPIError as error:
+            report["errors"].append(str(error))
+            text_print(f"ATTENTION {error}")
+            continue
+        report["bot"][key] = value
+        if key == "webhook":
+            if not value.get("url"):
+                text_print("Bot Webhook: Not configured")
+            for field, label in (
+                ("url", "Bot Webhook URL"),
+                ("ip_address", "Bot Webhook IP Address"),
+                ("pending_update_count", "Bot Pending Updates Awaiting Delivery"),
+                ("has_custom_certificate", "Bot Webhook Has Custom Certificate"),
+                ("last_error_date", "Bot Webhook Last Delivery Error Date (Unix timestamp)"),
+                ("last_error_message", "Bot Webhook Last Delivery Error"),
+                ("last_synchronization_error_date", "Bot Last Update Synchronization Error Date (Unix timestamp)"),
+                ("max_connections", "Bot Webhook Max Simultaneous HTTPS Connections"),
+                ("allowed_updates", "Bot Subscribed Update Types"),
+            ):
+                print_field(value, field, label)
+        elif key == "commands":
+            text_print("Bot Commands (default scope/language):" if value else "Bot Commands (default scope/language): None")
+            for command in value:
+                text_print(f"  /{command['command']}: {normalize_single_line(command['description'])}")
+        else:
+            print_field(value, "type", "Bot Default Menu Button Type")
+            print_field(value, "text", "Bot Default Menu Button Text")
+            if isinstance(value.get("web_app"), dict):
+                print_field(value["web_app"], "url", "Bot Default Menu Button Web App URL")
 
 
 def get_default_admin_rights(token, for_channels=False):
@@ -168,11 +266,6 @@ def get_chat_info(token, chat_id):
     return telegram_api_get(token, "getChat", params=params)
 
 
-def export_chat_invite_link(token, chat_id):
-    params = {"chat_id": chat_id}
-    return telegram_api_get(token, "exportChatInviteLink", params=params)
-
-
 def create_chat_invite_link(token, chat_id):
     params = {"chat_id": chat_id}
     return telegram_api_get(token, "createChatInviteLink", params=params)
@@ -184,7 +277,7 @@ def get_chat_member_count(token, chat_id):
 
 
 def get_chat_administrators(token, chat_id):
-    params = {"chat_id": chat_id}
+    params = {"chat_id": chat_id, "return_bots": "true"}
     return telegram_api_get(token, "getChatAdministrators", params=params)
 
 
@@ -198,14 +291,15 @@ def delete_message(token, chat_id, message_id):
     return telegram_api_post(token, "deleteMessage", data=data)
 
 
-def print_invite_links(chat_invite_link, exported_invite_link, created_invite_link):
-    if not chat_invite_link and not exported_invite_link and not created_invite_link:
-        text_print("Invite Links: None")
+def print_invite_links(chat_invite_link, created_invite_link):
+    if not chat_invite_link and not created_invite_link:
+        text_print("Invite Links: Not returned by Telegram")
         return
     text_print("Invite Links:")
-    text_print(f"  Chat Invite Link: {chat_invite_link}")
-    text_print(f"  Chat Invite Link (exported): {exported_invite_link}")
-    text_print(f"  Chat Invite Link (created): {created_invite_link}")
+    if chat_invite_link:
+        text_print(f"  Primary Chat Invite Link: {chat_invite_link}")
+    if created_invite_link:
+        text_print(f"  Additional Chat Invite Link (created): {created_invite_link}")
 
 
 def build_admin_json(chat_member, index):
@@ -236,6 +330,7 @@ def emit_json_report(report, print_json, json_file):
                 file_obj.write("\n")
             text_print(f"\nJSON report saved to: {json_file}")
         except OSError as error:
+            report["errors"].append("Unable to save JSON report.")
             text_print(f"\nATTENTION Unable to save JSON report to '{json_file}': {error}")
 
 
@@ -276,12 +371,26 @@ def get_value(cli_value, env_values, env_key=None, prompt_text=None):
     return None
 
 
-def message_to_json(message, downloaded_file=None):
+def format_utc_datetime(value):
+    if isinstance(value, datetime):
+        # Pyrofork uses local naive datetimes; astimezone applies the local
+        # offset for the message date, including daylight saving time.
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return value
+
+
+def hash_file_sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as file_obj:
+        for chunk in iter(lambda: file_obj.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def message_to_json(message, downloaded_file=None, chat_id=None, file_metadata=None):
     from_user = getattr(message, "from_user", None)
     sender_chat = getattr(message, "sender_chat", None)
-    date_value = getattr(message, "date", None)
-    if isinstance(date_value, datetime):
-        date_value = date_value.isoformat()
+    date_value = format_utc_datetime(getattr(message, "date", None))
     media_type = None
     if getattr(message, "media", None):
         media_type = str(message.media)
@@ -289,9 +398,17 @@ def message_to_json(message, downloaded_file=None):
     if downloaded_file:
         downloaded_file = display_path(downloaded_file)
 
-    return {
+    chat = getattr(message, "chat", None)
+    media = getattr(message, "media", None)
+    media_attr = str(getattr(media, "value", media) or "").rsplit(".", 1)[-1].lower()
+    attachment = getattr(message, media_attr, None) if media_attr in DOWNLOADABLE_MEDIA_TYPES else None
+    payload = {
+        "chat_id": getattr(chat, "id", None) or normalize_chat_reference(chat_id),
         "message_id": getattr(message, "id", None),
         "date": date_value,
+        "edit_date": format_utc_datetime(getattr(message, "edit_date", None)),
+        "reply_to_message_id": getattr(message, "reply_to_message_id", None),
+        "acquired_at": format_utc_datetime(datetime.now(timezone.utc)),
         "from_user_id": getattr(from_user, "id", None) if from_user else None,
         "from_username": getattr(from_user, "username", None) if from_user else None,
         "sender_chat_id": getattr(sender_chat, "id", None) if sender_chat else None,
@@ -299,13 +416,22 @@ def message_to_json(message, downloaded_file=None):
         "caption": getattr(message, "caption", None),
         "media_type": media_type,
         "downloaded_file": downloaded_file,
+        "original_file_name": getattr(attachment, "file_name", None),
+        "mime_type": getattr(attachment, "mime_type", None),
+        "telegram_file_size": getattr(attachment, "file_size", None),
+        "file_id": getattr(attachment, "file_id", None),
+        "file_unique_id": getattr(attachment, "file_unique_id", None),
+        "downloaded_file_size": None,
     }
+    if file_metadata:
+        payload.update(file_metadata)
+    return payload
 
 
 def message_to_text(message, downloaded_file=None):
     date_value = getattr(message, "date", None)
     if isinstance(date_value, datetime):
-        date_value = date_value.isoformat()
+        date_value = date_value.astimezone().isoformat()
     from_user = getattr(message, "from_user", None)
     sender_chat = getattr(message, "sender_chat", None)
     media_type = str(getattr(message, "media", "")) if getattr(message, "media", None) else ""
@@ -354,17 +480,18 @@ def build_messages_stem(chat_title=None, chat_id=None):
     return "messages_unknown"
 
 
-def build_bot_download_dir(base_download_dir, bot_username):
+def build_bot_download_dir(base_download_dir, bot_username, chat_id):
     bot_segment = sanitize_path_segment(bot_username or "unknown_bot")
-    return os.path.join(base_download_dir, bot_segment)
+    chat_segment = sanitize_path_segment(chat_id).strip(".") or "unknown"
+    return os.path.join(base_download_dir, bot_segment, chat_segment)
 
 
-def build_scoped_session_name(cli_session_name, chat_id, bot_username=None):
+def build_scoped_session_name(cli_session_name, chat_id, bot_username=None, download_auth_mode="bot"):
     if cli_session_name:
         return cli_session_name
     chat_segment = sanitize_path_segment(chat_id)
     bot_segment = sanitize_path_segment(bot_username) if bot_username else "unknown_bot"
-    return os.path.join("sessions", f"{bot_segment}_{chat_segment}", "tosint_user")
+    return os.path.join("sessions", f"{bot_segment}_{chat_segment}", download_auth_mode)
 
 
 def should_confirm_overwrite(path_value):
@@ -502,17 +629,15 @@ def normalize_downloaded_media_path(downloaded_file, message):
         return downloaded_file
 
 
-def process_download_message(message, app, chat_id, download_dir, manifest_file, text_file, result, skip_media=False):
+def process_download_message(message, app, chat_id, download_dir, manifest_file, text_file, result, skip_media=False, hash_media=False):
     if not getattr(message, "date", None):
         return False
 
     downloaded_file = None
-    media_type_str = str(getattr(message, "media", "")) if getattr(message, "media", None) else ""
-    media_type_upper = media_type_str.upper()
-    is_web_preview = "WEB_PAGE_PREVIEW" in media_type_str or "WEBPAGE" in media_type_upper
-    is_dice = "DICE" in media_type_upper
+    media_type = getattr(message, "media", None)
+    media_type_value = str(getattr(media_type, "value", media_type) or "").rsplit(".", 1)[-1].lower()
 
-    if getattr(message, "media", None) and not skip_media and not is_web_preview and not is_dice:
+    if not skip_media and media_type_value in DOWNLOADABLE_MEDIA_TYPES:
         try:
             media_dir = os.path.join(download_dir, "media")
             os.makedirs(media_dir, exist_ok=True)
@@ -532,7 +657,20 @@ def process_download_message(message, app, chat_id, download_dir, manifest_file,
                 f"message_id={getattr(message, 'id', None)} download error: {download_error}"
             )
 
-    message_payload = message_to_json(message, downloaded_file=downloaded_file)
+    file_metadata = {}
+    if downloaded_file:
+        try:
+            file_metadata["downloaded_file_size"] = os.path.getsize(downloaded_file)
+        except OSError as error:
+            result["errors"].append(f"message_id={message.id} file metadata error: {error}")
+        if hash_media:
+            try:
+                file_metadata["sha256"] = hash_file_sha256(downloaded_file)
+            except OSError as error:
+                file_metadata["sha256"] = None
+                file_metadata["hash_error"] = str(error)
+                result["errors"].append(f"message_id={message.id} SHA-256 error: {error}")
+    message_payload = message_to_json(message, downloaded_file=downloaded_file, chat_id=chat_id, file_metadata=file_metadata)
     manifest_file.write(json.dumps(message_payload, ensure_ascii=False))
     manifest_file.write("\n")
     text_file.write(message_to_text(message, downloaded_file=downloaded_file))
@@ -584,8 +722,12 @@ def download_chat_content(
     download_auth_mode="auto",
     progress_every=50,
     skip_media=False,
-    output_stem=None
+    output_stem=None,
+    batch_size=50,
+    hash_media=False
 ):
+    if not 1 <= batch_size <= 200:
+        raise ValueError("Download batch size must be between 1 and 200.")
     try:
         from pyrogram import Client
         from pyrogram.errors import SessionRevoked
@@ -603,12 +745,15 @@ def download_chat_content(
         "session_name": session_name,
         "download_dir": display_path(download_dir),
         "history_limit": history_limit,
+        "batch_size": batch_size,
+        "hash_media": hash_media,
         "download_mode_requested": download_mode,
         "download_mode_used": None,
         "start_message_id": start_message_id,
         "chat_title": None,
         "chat_type": None,
         "messages_scanned": 0,
+        "unavailable_message_ids": 0,
         "messages_exported": 0,
         "media_downloaded": 0,
         "media_failed": 0,
@@ -652,8 +797,13 @@ def download_chat_content(
                 if scanned - last_progress_scanned < progress_every:
                     return
                 current_id_part = f", current_message_id={current_message_id}" if current_message_id is not None else ""
+                scan_label = "ids_scanned" if result["download_mode_used"] == "idscan" else "messages_scanned"
+                unavailable_part = (
+                    f", unavailable_ids={result['unavailable_message_ids']}"
+                    if result["download_mode_used"] == "idscan" else ""
+                )
                 text_print(
-                    f"[DOWNLOAD] Progress: scanned={result['messages_scanned']}, "
+                    f"[DOWNLOAD] Progress: {scan_label}={result['messages_scanned']}{unavailable_part}, "
                     f"exported={result['messages_exported']}, media={result['media_downloaded']}, "
                     f"media_failed={result['media_failed']}{current_id_part}"
                 )
@@ -688,7 +838,8 @@ def download_chat_content(
                             manifest_file,
                             text_file,
                             result,
-                            skip_media=skip_media
+                            skip_media=skip_media,
+                            hash_media=hash_media
                         )
                         maybe_log_progress(getattr(message, "id", None))
 
@@ -698,20 +849,29 @@ def download_chat_content(
                     target_messages = int(history_limit) if history_limit and history_limit > 0 else current_message_id
 
                     while current_message_id > 0 and result["messages_exported"] < target_messages:
-                        result["messages_scanned"] += 1
-                        message = app.get_messages(chat_peer, current_message_id)
-                        process_download_message(
-                            message,
-                            app,
-                            chat_peer,
-                            download_dir,
-                            manifest_file,
-                            text_file,
-                            result,
-                            skip_media=skip_media
-                        )
-                        maybe_log_progress(current_message_id)
-                        current_message_id -= 1
+                        count = min(batch_size, current_message_id, target_messages - result["messages_exported"])
+                        message_ids = list(range(current_message_id, current_message_id - count, -1))
+                        messages = app.get_messages(chat_peer, message_ids, replies=0)
+                        # Match by ID: responses may omit IDs or arrive in a different order.
+                        messages_by_id = {message.id: message for message in messages}
+                        for message_id in message_ids:
+                            result["messages_scanned"] += 1
+                            message = messages_by_id.get(message_id)
+                            if not getattr(message, "date", None):
+                                result["unavailable_message_ids"] += 1
+                            process_download_message(
+                                message,
+                                app,
+                                chat_peer,
+                                download_dir,
+                                manifest_file,
+                                text_file,
+                                result,
+                                skip_media=skip_media,
+                                hash_media=hash_media
+                            )
+                            maybe_log_progress(message_id)
+                        current_message_id -= count
 
                 def ensure_start_id():
                     if result["start_message_id"]:
@@ -730,17 +890,17 @@ def download_chat_content(
                 if download_mode == "history":
                     run_history_download()
                     result["download_mode_used"] = "history"
-                elif download_mode == "idscan":
-                    run_id_scan_download(ensure_start_id())
+                elif download_mode == "idscan" or (download_mode == "auto" and download_auth_mode == "bot"):
                     result["download_mode_used"] = "idscan"
+                    run_id_scan_download(ensure_start_id())
                 else:
                     try:
                         run_history_download()
                         result["download_mode_used"] = "history"
                     except Exception as history_error:
                         result["errors"].append(f"history mode failed: {history_error}")
-                        run_id_scan_download(ensure_start_id())
                         result["download_mode_used"] = "idscan"
+                        run_id_scan_download(ensure_start_id())
     except KeyboardInterrupt:
         result["interrupted"] = True
         result["errors"].append("download interrupted by user")
@@ -758,23 +918,51 @@ def main():
     parser.add_argument('-c', '--chat_id', type=str, help='Telegram Chat ID (-100xxx)', required=False)
     parser.add_argument('--json', action='store_true', help='Print analysis report in JSON format')
     parser.add_argument('--json-file', type=str, help='Save analysis report as JSON file')
+    parser.add_argument('--create-invite-link', action='store_true', help='Create an additional chat invite link (requires -c and appropriate bot administrator rights)')
     parser.add_argument('--downloads', '--download', action='store_true', help='Download Telegram chat history and media')
     parser.add_argument('--api-id', type=str, help='Telegram API_ID for user session (Pyrofork)')
     parser.add_argument('--api-hash', type=str, help='Telegram API_HASH for user session (Pyrofork)')
-    parser.add_argument('--session-name', type=str, default=None, help='Pyrofork session name/path. If omitted, Tosint creates a scoped session per bot+chat under sessions/')
+    parser.add_argument('--session-name', type=str, default=None, help='Pyrofork session name/path override. By default: sessions/<bot>_<chat>/<bot|user>, based on --download-auth')
     parser.add_argument('--download-dir', type=str, default='downloads', help='Directory where messages/media are saved (default: downloads)')
     parser.add_argument('--download-overwrite', choices=['ask', 'always', 'never'], default='ask', help='How to handle an existing non-empty download directory: ask, always, or never (default: ask)')
     parser.add_argument('--download-limit', type=int, default=0, help='Max messages to export (0 = all)')
-    parser.add_argument('--download-mode', type=str, choices=['auto', 'history', 'idscan'], default='auto', help='Download strategy: auto (history then idscan fallback), history, or idscan')
+    parser.add_argument('--download-mode', type=str, choices=['auto', 'history', 'idscan'], default='auto', help='Download strategy: auto (bot: idscan; user: history with idscan fallback), history, or idscan')
     parser.add_argument('--download-auth', type=str, choices=['bot', 'user'], default='bot', help='Download auth mode: bot (default, uses -t token) or user (interactive login)')
     parser.add_argument('--download-start-id', type=int, help='Start message_id for idscan mode (latest known message id)')
     parser.add_argument('--download-progress-every', type=int, default=50, help='Print download progress every N scanned messages (0 disables)')
+    parser.add_argument('--download-batch-size', type=int, default=50, help='Message IDs per idscan request, from 1 to 200 (default: 50)')
     parser.add_argument('--skip-media-download', action='store_true', help='Do not download media attachments; export only message metadata/text')
+    parser.add_argument('--hash-media', action='store_true', help='Compute SHA-256 of downloaded attachments and include hashes in JSONL (disabled by default)')
     parser.add_argument('--env-file', type=str, default='.env', help='Env file path for API_ID/API_HASH (default: .env)')
 
     # Parse the command-line arguments
     args = parser.parse_args()
     TEXT_OUTPUT_ENABLED = not args.json
+    if not 1 <= args.download_batch_size <= 200:
+        parser.error('--download-batch-size must be between 1 and 200')
+    if not args.token.strip():
+        parser.error('-t/--token must not be empty')
+    if (args.downloads or args.create_invite_link) and not (args.chat_id and args.chat_id.strip()):
+        parser.error('--downloads and --create-invite-link require -c/--chat_id')
+
+    report = {"errors": []}
+    try:
+        run_analysis(args, report)
+    except TelegramAPIError as error:
+        report["errors"].append(str(error))
+        text_print(f"ATTENTION {error}")
+    except KeyboardInterrupt:
+        report["errors"].append("Analysis interrupted by user.")
+        text_print("\nAnalysis interrupted by user.")
+        emit_json_report(report, args.json, args.json_file)
+        return 130
+    emit_json_report(report, args.json, args.json_file)
+    if report.get("downloads", {}).get("interrupted"):
+        return 130
+    return 1 if report["errors"] else 0
+
+
+def run_analysis(args, report):
 
     env_values = load_env_file(args.env_file)
     # Only API credentials are read from .env by design.
@@ -806,8 +994,7 @@ def main():
     if args.downloads and not telegram_chat_id:
         text_print("ATTENTION Telegram chat id/username is required when using --downloads.")
         return
-
-    report = {
+    report.update({
         "input": {
             "token": telegram_token,
             "chat_id": telegram_chat_id,
@@ -818,7 +1005,7 @@ def main():
         "admins": [],
         "downloads": {},
         "errors": [],
-    }
+    })
 
     if run_bot_analysis:
         if telegram_chat_id:
@@ -889,7 +1076,9 @@ def main():
                     download_auth_mode=resolved_download_auth,
                     progress_every=args.download_progress_every,
                     skip_media=args.skip_media_download,
-                    output_stem=build_messages_stem(chat_title_for_files, telegram_chat_id)
+                    output_stem=build_messages_stem(chat_title_for_files, telegram_chat_id),
+                    batch_size=args.download_batch_size,
+                    hash_media=args.hash_media
                 )
                 report["downloads"] = download_result
                 if download_result.get("interrupted"):
@@ -903,7 +1092,10 @@ def main():
                 text_print(f"Download Directory: {display_path(download_result['download_dir'])}")
                 text_print(f"Manifest: {display_path(download_result['manifest_path'])}")
                 text_print(f"Text Log: {display_path(download_result['text_path'])}")
-                text_print(f"Messages Scanned: {download_result['messages_scanned']}")
+                scan_label = "Message IDs Scanned" if download_result['download_mode_used'] == "idscan" else "Messages Scanned"
+                text_print(f"{scan_label}: {download_result['messages_scanned']}")
+                if download_result['download_mode_used'] == "idscan":
+                    text_print(f"Unavailable Message IDs: {download_result['unavailable_message_ids']}")
                 text_print(f"Messages Exported: {download_result['messages_exported']}")
                 text_print(f"Media Downloaded: {download_result['media_downloaded']}")
                 text_print(f"Media Failed: {download_result['media_failed']}")
@@ -923,7 +1115,7 @@ def main():
         text_print(f"Bot First Name: {telegram_get_me['first_name']}")
         text_print(f"Bot Username: {telegram_get_me['username']}")
         text_print(f"Bot User ID: {telegram_get_me['id']}")
-        text_print(f"Bot Can Read Group Messages: {format_output_value(telegram_get_me['can_read_all_group_messages'])}")
+        print_field(telegram_get_me, "can_read_all_group_messages", "Bot Can Read All Group Messages")
         report["bot"]["first_name"] = telegram_get_me.get("first_name")
         report["bot"]["username"] = telegram_get_me.get("username")
         report["bot"]["user_id"] = telegram_get_me.get("id")
@@ -949,26 +1141,28 @@ def main():
                     text_print(f"Bot Short Description: {short_desc}")
                     report["bot"]["short_description"] = short_desc
 
+        enrich_bot_info(telegram_token, report)
+
         # Get Bot Default Admin Rights (groups/supergroups)
         default_admin_rights_response = get_default_admin_rights(telegram_token, for_channels=False)
         default_admin_rights = default_admin_rights_response.get("result")
         if default_admin_rights:
-            text_print(f"Bot Default Administrator Rights (groups): {format_output_value(default_admin_rights)}")
+            text_print(f"Bot Default Requested Administrator Rights (groups/supergroups): {format_output_value(default_admin_rights)}")
             report["bot"]["default_admin_rights_groups"] = default_admin_rights
 
         # Get Bot Default Admin Rights (channels)
         default_admin_rights_channels_response = get_default_admin_rights(telegram_token, for_channels=True)
         default_admin_rights_channels = default_admin_rights_channels_response.get("result")
         if default_admin_rights_channels:
-            text_print(f"Bot Default Administrator Rights (channels): {format_output_value(default_admin_rights_channels)}")
+            text_print(f"Bot Default Requested Administrator Rights (channels): {format_output_value(default_admin_rights_channels)}")
             report["bot"]["default_admin_rights_channels"] = default_admin_rights_channels
 
         # Get Bot Status - Member or Admin
 
-        bot_chat_member_response = get_bot_chat_member(telegram_token, telegram_chat_id, telegram_get_me['id'])
+        bot_chat_member_response = get_bot_chat_member(telegram_token, telegram_chat_id, telegram_get_me['id']) if telegram_chat_id else {}
         if bot_chat_member_response.get('result'):
             telegram_get_chat_member = bot_chat_member_response.get('result')
-            text_print(f"Bot In The Chat Is An: {telegram_get_chat_member['status']}")
+            text_print(f"Bot Chat Membership Status: {telegram_get_chat_member['status']}")
             report["bot"]["status_in_chat"] = telegram_get_chat_member.get("status")
         elif bot_chat_member_response.get('description'):
             error_description = bot_chat_member_response.get('description')
@@ -982,7 +1176,6 @@ def main():
         if not telegram_chat_id:
             text_print("\n[CHAT]")
             text_print("Chat ID not provided. Skipping chat and admins analysis.")
-            emit_json_report(report, args.json, args.json_file)
             return
 
         # Get Chat Info
@@ -999,7 +1192,6 @@ def main():
             else:
                 text_print("ATTENTION Chat ID is invalid, inaccessible, or no longer available.")
                 report["errors"].append("Chat ID is invalid, inaccessible, or no longer available.")
-            emit_json_report(report, args.json, args.json_file)
             return
 
         print_section("CHAT")
@@ -1019,23 +1211,19 @@ def main():
                 report["errors"].append(f"linked_chat_id getChat error: {linked_chat_response.get('description')}")
 
 
-        # Export Chat Invite Link
-
-        export_invite_response = export_chat_invite_link(telegram_token, telegram_chat_id)
-        exported_invite_link = export_invite_response.get("result")
-
-        # Create Chat Invite Link
-
-        create_invite_response = create_chat_invite_link(telegram_token, telegram_chat_id)
-        created_invite_link_result = create_invite_response.get('result')
         created_invite_link = None
-        if created_invite_link_result and "invite_link" in created_invite_link_result:
-            created_invite_link = created_invite_link_result["invite_link"]
+        if args.create_invite_link:
+            create_invite_response = create_chat_invite_link(telegram_token, telegram_chat_id)
+            if create_invite_response.get("ok"):
+                created_invite_link = create_invite_response.get("result", {}).get("invite_link")
+            else:
+                create_error = create_invite_response.get("description", "Unknown Telegram API error")
+                text_print(f"ATTENTION createChatInviteLink error: {create_error}")
+                report["errors"].append(f"createChatInviteLink error: {create_error}")
 
-        print_invite_links(telegram_get_chat.get('invite_link'), exported_invite_link, created_invite_link)
+        print_invite_links(telegram_get_chat.get('invite_link'), created_invite_link)
         report["invite_links"] = {
             "chat_invite_link": telegram_get_chat.get("invite_link"),
-            "exported": exported_invite_link,
             "created": created_invite_link,
         }
 
@@ -1044,13 +1232,17 @@ def main():
         chat_member_count_response = get_chat_member_count(telegram_token, telegram_chat_id)
         telegram_chat_members_count = chat_member_count_response.get('result')
 
-        text_print(f"Number of users in the chat: {telegram_chat_members_count}")
+        text_print(f"Chat Member Count: {telegram_chat_members_count}")
         report["chat"]["member_count"] = telegram_chat_members_count
 
         # Get Administrators in chat
 
-        chat_administrators_response = get_chat_administrators(telegram_token, telegram_chat_id)
+        chat_administrators_response = get_chat_administrators(telegram_token, telegram_chat_id) if telegram_get_chat.get("type") != "private" else {}
         telegram_get_chat_administrators = chat_administrators_response.get('result')
+        if chat_administrators_response.get("ok") is False:
+            admin_error = f"getChatAdministrators: {chat_administrators_response.get('description', 'Unknown Telegram API error')}"
+            text_print(f"ATTENTION {admin_error}")
+            report["errors"].append(admin_error)
 
         if telegram_get_chat_administrators:
             print_section("ADMINS")
@@ -1058,20 +1250,23 @@ def main():
             for index, chat_member in enumerate(telegram_get_chat_administrators, start=1):
                 print_admin_details(chat_member, index)
                 report["admins"].append(build_admin_json(chat_member, index))
-        scoped_session_name = build_scoped_session_name(args.session_name, telegram_chat_id, bot_username)
+        scoped_session_name = build_scoped_session_name(args.session_name, telegram_chat_id, bot_username, args.download_auth)
         perform_downloads(
-            build_bot_download_dir(args.download_dir, bot_username),
+            build_bot_download_dir(args.download_dir, bot_username, telegram_get_chat.get("id") or telegram_chat_id),
             telegram_token,
             scoped_session_name,
             telegram_get_chat.get("title")
         )
-        emit_json_report(report, args.json, args.json_file)
     else:
-        text_print('Telegram token is invalid or revoked.')
-        report["errors"].append("Telegram token is invalid or revoked.")
-        text_print("Download phase skipped because bot token validation failed.")
-        emit_json_report(report, args.json, args.json_file)
+        if telegram_get_me_response.get("error_code") == 401:
+            error_message = "Telegram token is invalid or revoked."
+        else:
+            error_message = f"Bot token validation failed: {telegram_get_me_response.get('description', 'Unexpected getMe response')}"
+        text_print(error_message)
+        report["errors"].append(error_message)
+        if args.downloads:
+            text_print("Download phase skipped because bot token validation failed.")
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

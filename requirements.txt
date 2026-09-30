@@ -1,3 +1,3 @@
-requests
-pyrofork
-tgcrypto
+requests==2.34.2
+pyrofork==2.3.69
+tgcrypto==1.2.5
