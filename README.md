@@ -5,7 +5,7 @@ It analyzes bot tokens and target chats (channels, groups, and DMs) to quickly e
 
 Built for investigators, threat analysts, and security researchers, Tosint helps profile malicious infrastructure used in phishing, malware operations, credential theft, and related campaigns.
 
-It can also export full chat history and media for forensic collection and offline analysis.
+It can also export available chat history and media for forensic collection and offline analysis.
 
 ## Use Cases
 
@@ -125,6 +125,8 @@ Hashes appear as `sha256` in JSONL only for downloaded files when requested.
 Hashing reads each entire file in chunks and can add time for large downloads.
 Hash failures are recorded without treating a successful download as failed.
 The TXT format stays minimal, and no separate acquisition file is created.
+Press `Ctrl+C` to stop an acquisition early; messages already written remain
+available and the download is reported as interrupted.
 
 ## Installation
 
@@ -135,10 +137,12 @@ git clone https://github.com/drego85/tosint.git
 cd tosint
 ```
 
-2. Install dependencies:
+2. Create a virtual environment and install dependencies:
 
 ```bash
-pip install -r requirements.txt
+python3 -m venv venv
+source venv/bin/activate
+python -m pip install -r requirements.txt
 ```
 
 `tgcrypto` is optional from a functional perspective, but strongly recommended for much faster MTProto upload/download performance.
@@ -158,13 +162,13 @@ TELEGRAM_API_ID=123456
 TELEGRAM_API_HASH=0123456789abcdef0123456789abcdef
 ```
 
+Only these two values are used from `.env`. Bot tokens and chat IDs must be
+provided through the CLI.
+
 ## Usage and CLI Examples
 
-### Interactive mode
-
-```bash
-python3 tosint.py
-```
+The bot token (`-t`) is always required. The chat ID (`-c`) is optional for
+bot-only analysis, but required for chat analysis and downloads.
 
 ### CLI mode
 
@@ -208,13 +212,19 @@ python3 tosint.py -t <TELEGRAM_BOT_TOKEN> -c <TELEGRAM_CHAT_ID> --json-file /tmp
 python3 tosint.py -t <TELEGRAM_BOT_TOKEN> -c <TELEGRAM_CHAT_ID> --downloads
 ```
 
-This uses `--download-mode auto` by default:
-- with bot authentication (default), directly uses ID scan (`get_messages` by `message_id`).
-- with user authentication, first tries MTProto history (`get_chat_history`) and falls back to ID scan if history fails.
-- output is saved under `downloads/<bot_username>/<chat_id>/` with:
-  - `messages_<chat_title_sanitized>.jsonl` (structured JSON lines)
-  - `messages_<chat_title_sanitized>.txt` (human-readable text log)
-  - `media/` (downloaded attachments when media download is enabled)
+The default `--download-mode auto` uses ID scan with bot authentication.
+With user authentication, it tries chat history first and falls back to ID
+scan if history fails.
+
+Exports are saved under `downloads/<bot_username>/<chat_id>/`:
+
+```text
+messages_<chat_title_sanitized>.jsonl
+messages_<chat_title_sanitized>.txt
+media/
+```
+
+The `media/` directory is created when an attachment download is attempted.
 
 Each chat has a separate export directory, including when the same bot is used
 for multiple chats. For chats without a title, filenames use the chat ID, for
@@ -224,7 +234,8 @@ Existing exports in the previous directory layout are left unchanged.
 ID scan retrieves up to 50 message IDs per request by default. Configure this
 with `--download-batch-size <1-200>`. Missing or deleted IDs are skipped without
 discarding the other messages in the batch. Exports remain ordered from newest
-to oldest; `scanned` counts processed IDs and `exported` counts valid messages.
+to oldest; `ids_scanned` counts processed IDs, `unavailable_ids` counts IDs for
+which no dated message was returned, and `exported` counts exported messages.
 If the entire request fails, the error is reported rather than silently skipping
 the batch. `--download-limit` still limits the number of messages exported.
 
@@ -239,6 +250,12 @@ message text are preserved. Use `--skip-media-download` to skip all attachments.
 
 - `bot` (default): uses the bot token provided with `-t/--token` for the download session.
 - `user`: forces user authentication and shows Pyrogram login prompt (phone number or QR code flow).
+
+To use a user account instead of the bot for downloading:
+
+```bash
+python3 tosint.py -t <TELEGRAM_BOT_TOKEN> -c <TELEGRAM_CHAT_ID> --download --download-auth user
+```
 
 By default, authentication modes use separate session files:
 
@@ -281,7 +298,7 @@ python3 tosint.py -t <TELEGRAM_BOT_TOKEN> -c <TELEGRAM_CHAT_ID> --downloads --do
 - `--download-mode`: `auto`, `history`, `idscan` (default: `auto`)
 - `--download-auth`: `bot`, `user` (default: `bot`)
 - `--download-start-id`: start `message_id` for `idscan` mode
-- `--download-progress-every`: print progress every N scanned messages (`0` disables, default: `50`)
+- `--download-progress-every`: print progress every N scanned IDs or history messages (`0` disables, default: `50`)
 - `--download-batch-size`: IDs per request in `idscan` mode (`1` to `200`, default: `50`; ignored in `history` mode)
 - `--skip-media-download`: skip attachment files and export only message metadata/text
 - `--hash-media`: optionally compute SHA-256 for downloaded attachments and record it in JSONL (disabled by default)
@@ -416,6 +433,17 @@ Administrators in the chat:
 - `PEER_ID_INVALID` / `CHAT_ID_INVALID`: try a separate session (`--session-name`) and/or the other authentication mode (bot token vs user account).
 - Many scanned messages but `exported=0`: the scanned ID range may not be accessible/visible for that session; try `--download-mode history` or a different `--download-start-id`.
 - Frequent `Waiting for X seconds` messages: this is Telegram FloodWait rate limiting and is expected on large `idscan` runs.
+
+## Tests
+
+Run the tests from the project root after installing dependencies:
+
+```bash
+python -m unittest discover -s tests
+```
+
+The tests use simulated data and do not require Telegram credentials or access
+to a real chat.
 
 ## Contributing and Supporting the Project
 
