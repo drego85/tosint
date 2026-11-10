@@ -66,6 +66,9 @@ a reused session, especially with a custom `--session-name`.
 In automatic mode, bot sessions use `idscan` directly. User sessions try history
 and may fall back to ID scan. Match batch responses by message ID, not position;
 missing messages must not discard valid messages from the same batch.
+After a partial history retrieval failure, scan below the oldest exported ID
+and deduplicate within the current run. Export limits count unique messages.
+Do not use history fallback to handle export write failures.
 
 Unavailable IDs do not prove deletion. Bot privacy flags, administrator rights,
 history visibility for new members, and actual historical access are distinct.
@@ -85,9 +88,9 @@ Do not contact real Telegram targets, initiate logins, reuse live sessions, or
 send test messages unless the user explicitly authorizes that verification.
 Use mocked clients and temporary directories for normal development tests.
 
-Review follow-ups still to implement separately: deduplicating partial history
-fallbacks and verifying the identity of reused sessions. Do not describe these
-as solved or introduce resume/deduplication between runs without approval.
+The remaining review follow-up is verifying the identity of reused sessions.
+Do not describe it as solved or introduce resume/deduplication between runs
+without approval.
 
 ## Export Contracts
 

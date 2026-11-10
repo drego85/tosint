@@ -215,6 +215,11 @@ python3 tosint.py -t <TELEGRAM_BOT_TOKEN> -c <TELEGRAM_CHAT_ID> --downloads
 The default `--download-mode auto` uses ID scan with bot authentication.
 With user authentication, it tries chat history first and falls back to ID
 scan if history fails.
+If history retrieval fails after exporting messages, ID scan continues below
+the oldest exported ID. Messages already exported in that run are not downloaded
+again, and the export limit counts unique messages. This is not resume support
+between separate runs. Export write errors stop acquisition instead of triggering
+a history fallback.
 
 Exports are saved under `downloads/<bot_username>/<chat_id>/`:
 

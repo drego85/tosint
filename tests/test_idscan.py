@@ -27,10 +27,12 @@ class IDScanBatchTests(unittest.TestCase):
                 self.assertFalse(download_dir.exists())
                 self.assertFalse(Path(session_name).parent.exists())
 
-    def run_download(self, start=123, limit=0, batch=50, missing=(), failure=None, auth="bot", progress=0):
+    def run_download(self, start=123, limit=0, batch=50, missing=(), failure=None, auth="bot", progress=0, history=None):
         app = Mock()
         app.get_chat.return_value = SimpleNamespace(title="Example", type="group")
         app.get_chat_history.return_value = iter([])
+        if history is not None:
+            app.get_chat_history.side_effect = history
 
         def get_messages(chat, ids, replies):
             self.assertEqual(replies, 0)
@@ -97,6 +99,57 @@ class IDScanBatchTests(unittest.TestCase):
         app, result, _ = self.run_download(auth="user")
         app.get_messages.assert_not_called()
         self.assertEqual(result["download_mode_used"], "history")
+
+    def failing_history(self, ids):
+        def history(**kwargs):
+            for message_id in ids:
+                yield SimpleNamespace(id=message_id, date=datetime(2026, 11, 10))
+            raise RuntimeError("history unavailable")
+        return history
+
+    def test_partial_history_fallback_keeps_limit_and_order_without_duplicates(self):
+        app, result, rows = self.run_download(
+            start=5, limit=3, auth="user", history=self.failing_history([5, 4])
+        )
+        self.assertEqual([row["message_id"] for row in rows], [5, 4, 3])
+        self.assertEqual(app.get_messages.call_args.args[1], [3])
+        self.assertEqual(result["messages_exported"], 3)
+        self.assertEqual(result["start_message_id"], 3)
+
+    def test_unlimited_fallback_scans_all_older_ids_without_sending_probe(self):
+        with patch.object(tosint, "resolve_start_message_id_with_bot") as probe:
+            app, result, rows = self.run_download(
+                start=None, auth="user", history=self.failing_history([5, 4])
+            )
+        probe.assert_not_called()
+        self.assertEqual([row["message_id"] for row in rows], [5, 4, 3, 2, 1])
+        self.assertEqual(app.get_messages.call_args.args[1], [3, 2, 1])
+        self.assertEqual(result["messages_exported"], 5)
+
+    def test_failure_before_first_history_message_scans_from_explicit_start(self):
+        _, result, rows = self.run_download(
+            start=5, auth="user", history=self.failing_history([])
+        )
+        self.assertEqual([row["message_id"] for row in rows], [5, 4, 3, 2, 1])
+        self.assertEqual(result["download_mode_used"], "idscan")
+
+    def test_repeated_history_ids_are_exported_only_once(self):
+        _, _, rows = self.run_download(
+            start=5, limit=3, auth="user", history=self.failing_history([5, 5, 4])
+        )
+        self.assertEqual([row["message_id"] for row in rows], [5, 4, 3])
+
+    def test_fallback_after_message_one_does_not_repeat_history(self):
+        app, _, rows = self.run_download(
+            start=None, auth="user", history=self.failing_history([1])
+        )
+        app.get_messages.assert_not_called()
+        self.assertEqual([row["message_id"] for row in rows], [1])
+
+    def test_export_write_failure_does_not_trigger_history_fallback(self):
+        with patch.object(tosint, "process_download_message", side_effect=OSError("disk full")):
+            with self.assertRaisesRegex(OSError, "disk full"):
+                self.run_download(auth="user", history=self.failing_history([5]))
 
 
 if __name__ == "__main__":

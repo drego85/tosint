@@ -22,6 +22,10 @@ class TelegramAPIError(RuntimeError):
     """A Bot API request failed before a usable Telegram response was received."""
 
 
+class HistoryRetrievalError(RuntimeError):
+    """Reading Telegram history failed, independently of writing the export."""
+
+
 def text_print(*args, **kwargs):
     if TEXT_OUTPUT_ENABLED:
         print(*args, **kwargs)
@@ -875,33 +879,49 @@ def download_chat_content(
             effective_stem = output_stem or build_messages_stem(result.get("chat_title"), chat_id)
 
             with staged_message_export(download_dir, effective_stem, result) as (manifest_file, text_file):
+                exported_ids = set()
+
+                def export_message(message):
+                    message_id = getattr(message, "id", None)
+                    if message_id in exported_ids:
+                        return
+                    if process_download_message(
+                        message, app, chat_peer, download_dir, manifest_file,
+                        text_file, result, skip_media=skip_media, hash_media=hash_media
+                    ):
+                        exported_ids.add(message_id)
+
                 def run_history_download():
                     history_kwargs = {"chat_id": chat_peer}
                     if history_limit and history_limit > 0:
                         history_kwargs["limit"] = history_limit
 
-                    for message in app.get_chat_history(**history_kwargs):
+                    try:
+                        history = iter(app.get_chat_history(**history_kwargs))
+                    except Exception as error:
+                        raise HistoryRetrievalError(str(error)) from error
+                    while True:
+                        try:
+                            message = next(history)
+                        except StopIteration:
+                            break
+                        except Exception as error:
+                            raise HistoryRetrievalError(str(error)) from error
                         result["messages_scanned"] += 1
-                        process_download_message(
-                            message,
-                            app,
-                            chat_peer,
-                            download_dir,
-                            manifest_file,
-                            text_file,
-                            result,
-                            skip_media=skip_media,
-                            hash_media=hash_media
-                        )
+                        export_message(message)
                         maybe_log_progress(getattr(message, "id", None))
+                        if history_limit and result["messages_exported"] >= history_limit:
+                            break
 
                 def run_id_scan_download(start_id):
                     current_message_id = int(start_id)
-                    # If history_limit is 0, scan everything down to message_id=1.
-                    target_messages = int(history_limit) if history_limit and history_limit > 0 else current_message_id
-
-                    while current_message_id > 0 and result["messages_exported"] < target_messages:
-                        count = min(batch_size, current_message_id, target_messages - result["messages_exported"])
+                    while current_message_id > 0:
+                        count = min(batch_size, current_message_id)
+                        if history_limit:
+                            remaining = history_limit - result["messages_exported"]
+                            if remaining <= 0:
+                                break
+                            count = min(count, remaining)
                         message_ids = list(range(current_message_id, current_message_id - count, -1))
                         messages = app.get_messages(chat_peer, message_ids, replies=0)
                         # Match by ID: responses may omit IDs or arrive in a different order.
@@ -911,17 +931,7 @@ def download_chat_content(
                             message = messages_by_id.get(message_id)
                             if not getattr(message, "date", None):
                                 result["unavailable_message_ids"] += 1
-                            process_download_message(
-                                message,
-                                app,
-                                chat_peer,
-                                download_dir,
-                                manifest_file,
-                                text_file,
-                                result,
-                                skip_media=skip_media,
-                                hash_media=hash_media
-                            )
+                            export_message(message)
                             maybe_log_progress(message_id)
                         current_message_id -= count
 
@@ -940,19 +950,28 @@ def download_chat_content(
                     )
 
                 if download_mode == "history":
-                    run_history_download()
                     result["download_mode_used"] = "history"
+                    run_history_download()
                 elif download_mode == "idscan" or (download_mode == "auto" and download_auth_mode == "bot"):
                     result["download_mode_used"] = "idscan"
                     run_id_scan_download(ensure_start_id())
                 else:
+                    result["download_mode_used"] = "history"
                     try:
                         run_history_download()
-                        result["download_mode_used"] = "history"
-                    except Exception as history_error:
+                    except HistoryRetrievalError as history_error:
                         result["errors"].append(f"history mode failed: {history_error}")
                         result["download_mode_used"] = "idscan"
-                        run_id_scan_download(ensure_start_id())
+                        if exported_ids:
+                            # History is newest-first: continue below the oldest
+                            # exported ID without posting a new probe message.
+                            next_id = min(exported_ids) - 1
+                            if start_message_id is not None:
+                                next_id = min(next_id, start_message_id)
+                            result["start_message_id"] = next_id
+                        else:
+                            next_id = ensure_start_id()
+                        run_id_scan_download(next_id)
     except KeyboardInterrupt:
         result["interrupted"] = True
         result["errors"].append("download interrupted by user")
