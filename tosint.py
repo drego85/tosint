@@ -731,6 +731,10 @@ def download_chat_content(
 ):
     if not 1 <= batch_size <= 200:
         raise ValueError("Download batch size must be between 1 and 200.")
+    if start_message_id is not None and start_message_id <= 0:
+        raise ValueError("Download start message ID must be greater than zero.")
+    if history_limit < 0:
+        raise ValueError("Download limit must be zero or greater.")
     try:
         from pyrogram import Client
         from pyrogram.errors import SessionRevoked
@@ -943,6 +947,10 @@ def main():
     TEXT_OUTPUT_ENABLED = not args.json
     if not 1 <= args.download_batch_size <= 200:
         parser.error('--download-batch-size must be between 1 and 200')
+    if args.download_start_id is not None and args.download_start_id <= 0:
+        parser.error('--download-start-id must be greater than zero')
+    if args.download_limit < 0:
+        parser.error('--download-limit must be zero or greater')
     if not args.token.strip():
         parser.error('-t/--token must not be empty')
     if (args.downloads or args.create_invite_link) and not (args.chat_id and args.chat_id.strip()):

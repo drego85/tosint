@@ -294,10 +294,10 @@ python3 tosint.py -t <TELEGRAM_BOT_TOKEN> -c <TELEGRAM_CHAT_ID> --downloads --do
 - `--session-name`: Pyrofork session name/path override. If omitted, Tosint uses `sessions/<bot>_<chat>/bot` or `sessions/<bot>_<chat>/user`, according to `--download-auth`
 - `--download-dir`: target folder for downloaded content (default: `downloads`)
 - `--download-overwrite`: overwrite policy for an existing non-empty download directory: `ask`, `always`, or `never` (default: `ask`)
-- `--download-limit`: max messages to export (`0` = all)
+- `--download-limit`: max messages to export (`0` = all; negative values are rejected)
 - `--download-mode`: `auto`, `history`, `idscan` (default: `auto`)
 - `--download-auth`: `bot`, `user` (default: `bot`)
-- `--download-start-id`: start `message_id` for `idscan` mode
+- `--download-start-id`: positive start `message_id` for `idscan` mode (`0` and negative values are rejected)
 - `--download-progress-every`: print progress every N scanned IDs or history messages (`0` disables, default: `50`)
 - `--download-batch-size`: IDs per request in `idscan` mode (`1` to `200`, default: `50`; ignored in `history` mode)
 - `--skip-media-download`: skip attachment files and export only message metadata/text

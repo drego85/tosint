@@ -11,6 +11,22 @@ import tosint
 
 
 class IDScanBatchTests(unittest.TestCase):
+    def test_invalid_ranges_are_rejected_before_creating_directories(self):
+        for options in (
+            {"history_limit": -1},
+            {"history_limit": 0, "start_message_id": 0},
+            {"history_limit": 0, "start_message_id": -5},
+        ):
+            with self.subTest(options=options), tempfile.TemporaryDirectory() as directory:
+                download_dir = Path(directory, "export")
+                session_name = str(Path(directory, "session", "bot"))
+                with self.assertRaises(ValueError):
+                    tosint.download_chat_content(
+                        123, 1, "fake", session_name, str(download_dir), **options
+                    )
+                self.assertFalse(download_dir.exists())
+                self.assertFalse(Path(session_name).parent.exists())
+
     def run_download(self, start=123, limit=0, batch=50, missing=(), failure=None, auth="bot", progress=0):
         app = Mock()
         app.get_chat.return_value = SimpleNamespace(title="Example", type="group")
