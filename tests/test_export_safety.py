@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import tempfile
@@ -132,6 +133,31 @@ class ExportSafetyTests(unittest.TestCase):
             Path(directory, "3_report_1.txt.temp").touch()
             self.assertEqual(Path(tosint.build_unique_media_target(message, directory)).name,
                              "3_report_2.txt")
+
+    def test_inferred_extension_cannot_overwrite_a_previous_attachment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            media_dir = Path(directory, "media")
+            media_dir.mkdir()
+            previous = media_dir / "3_report.pdf"
+            previous.write_text("Previous attachment")
+            message = self.message()
+            message.media = "MessageMediaType.DOCUMENT"
+            message.document = SimpleNamespace(file_name="report", mime_type="application/pdf")
+            app = Mock()
+
+            def download_media(message, file_name):
+                Path(file_name).write_text("New attachment")
+                return file_name
+
+            app.download_media.side_effect = download_media
+            manifest = io.StringIO()
+            result = {"media_downloaded": 0, "media_failed": 0,
+                      "messages_exported": 0, "errors": []}
+            tosint.process_download_message(message, app, 123, directory, manifest, io.StringIO(), result)
+            self.assertEqual(previous.read_text(), "Previous attachment")
+            payload = json.loads(manifest.getvalue())
+            self.assertEqual(Path(payload["downloaded_file"]).name, "3_report_1.pdf")
+            self.assertEqual(Path(payload["downloaded_file"]).read_text(), "New attachment")
 
 
 if __name__ == "__main__":

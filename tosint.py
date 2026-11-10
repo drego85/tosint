@@ -677,6 +677,8 @@ def build_unique_media_target(message, media_dir):
     original_name = infer_media_filename(message)
     base_name = sanitize_path_segment(original_name)
     stem, ext = os.path.splitext(base_name)
+    if not ext:
+        ext = infer_media_extension(message) or ""
     message_id = getattr(message, "id", "unknown")
     unique_stem = f"{message_id}_{stem}"
     candidate = os.path.join(media_dir, f"{unique_stem}{ext}")
