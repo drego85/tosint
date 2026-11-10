@@ -320,18 +320,17 @@ def build_admin_json(chat_member, index):
 def emit_json_report(report, print_json, json_file):
     if not print_json and not json_file:
         return
-    report_payload = json.dumps(report, indent=2, ensure_ascii=False)
-    if print_json:
-        print(report_payload)
     if json_file:
         try:
             with open(json_file, "w", encoding="utf-8") as file_obj:
-                file_obj.write(report_payload)
+                file_obj.write(json.dumps(report, indent=2, ensure_ascii=False))
                 file_obj.write("\n")
             text_print(f"\nJSON report saved to: {json_file}")
         except OSError as error:
             report["errors"].append("Unable to save JSON report.")
             text_print(f"\nATTENTION Unable to save JSON report to '{json_file}': {error}")
+    if print_json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
 
 
 def load_env_file(env_path):
