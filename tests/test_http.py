@@ -34,6 +34,36 @@ class BotAPIHTTPTests(unittest.TestCase):
             with self.assertRaisesRegex(tosint.TelegramAPIError, "transport error"):
                 tosint.get_bot_info("secret")
 
+    def test_temporary_message_cleanup_transport_failure_keeps_start_id(self):
+        for failure in (requests.Timeout("secret"), requests.ConnectionError("secret")):
+            with self.subTest(failure=type(failure).__name__):
+                with patch.object(tosint, "send_message", return_value={
+                    "ok": True, "result": {"message_id": 42}
+                }), patch("tosint.requests.request", side_effect=failure) as request:
+                    message_id, warning = tosint.resolve_start_message_id_with_bot("secret", 123)
+                self.assertEqual(message_id, 42)
+                self.assertIn("Temporary message cleanup failed:", warning)
+                self.assertNotIn("secret", warning)
+                request.assert_called_once()
+
+    def test_temporary_message_cleanup_api_failure_is_nonfatal(self):
+        with patch.object(tosint, "send_message", return_value={
+            "ok": True, "result": {"message_id": 42}
+        }), patch.object(tosint, "delete_message", return_value={
+            "ok": False, "description": "Not enough rights"
+        }):
+            message_id, warning = tosint.resolve_start_message_id_with_bot("fake", 123)
+        self.assertEqual(message_id, 42)
+        self.assertIn("Not enough rights", warning)
+
+    def test_temporary_message_send_failure_still_aborts(self):
+        with patch.object(tosint, "send_message", side_effect=tosint.TelegramAPIError(
+            "sendMessage: request timed out"
+        )), patch.object(tosint, "delete_message") as cleanup:
+            with self.assertRaises(tosint.TelegramAPIError):
+                tosint.resolve_start_message_id_with_bot("fake", 123)
+        cleanup.assert_not_called()
+
     def test_telegram_error_response_preserves_parameters(self):
         payload = {"ok": False, "error_code": 400, "description": "migrated", "parameters": {"migrate_to_chat_id": -100123}}
         with patch("tosint.requests.request", return_value=self.response(400, payload)):

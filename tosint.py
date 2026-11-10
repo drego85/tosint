@@ -700,7 +700,10 @@ def resolve_start_message_id_with_bot(bot_token, chat_id):
     if not message_id:
         raise RuntimeError("Unable to derive start message id via bot: missing message_id in response.")
 
-    delete_response = delete_message(bot_token, chat_id, message_id)
+    try:
+        delete_response = delete_message(bot_token, chat_id, message_id)
+    except TelegramAPIError as error:
+        return message_id, f"Temporary message cleanup failed: {error}"
     if not delete_response.get("ok"):
         delete_error = delete_response.get("description", "unknown error")
         # Non-fatal: we still got the message_id and can continue the download.
