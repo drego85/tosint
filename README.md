@@ -275,6 +275,15 @@ distinct paths for bot and user authentication to keep their sessions separate.
 - `always`: continue without prompting and reuse the existing directory.
 - `never`: skip the download when the target directory already exists and is not empty.
 
+TXT and JSONL logs are written in a separate `.acquisition-*` working directory
+and replace the previous logs only after acquisition completes. On failure or
+interruption, the previous logs remain unchanged and the working directory is
+retained for inspection. Its path is reported in text output; interrupted
+downloads also return their partial log paths in the JSON report.
+If publishing either log fails, Tosint attempts to restore the previous pair.
+Existing attachment files are kept; new filename collisions receive a numeric
+suffix, so a failed run cannot overwrite media referenced by a previous export.
+
 Example:
 
 ```bash

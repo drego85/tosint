@@ -85,10 +85,9 @@ Do not contact real Telegram targets, initiate logins, reuse live sessions, or
 send test messages unless the user explicitly authorizes that verification.
 Use mocked clients and temporary directories for normal development tests.
 
-Existing review follow-ups remain deferred until requested: protecting previous
-exports during failed replacements, deduplicating partial history fallbacks,
-and verifying the identity of reused sessions. Do not describe these as solved
-or introduce resume/deduplication between runs without approval.
+Review follow-ups still to implement separately: deduplicating partial history
+fallbacks and verifying the identity of reused sessions. Do not describe these
+as solved or introduce resume/deduplication between runs without approval.
 
 ## Export Contracts
 
@@ -97,6 +96,10 @@ Keep each chat under `downloads/<bot_username>/<chat_id>/`, with sanitized
 fall back to the chat ID. Keep attachment files in that chat's `media/` directory.
 Use message-ID-prefixed sanitized filenames to distinguish same-named attachments.
 Keep displayed and exported paths relative to the working directory.
+Stage TXT and JSONL in a separate `.acquisition-*` directory until acquisition
+completes. Preserve previous logs and retain partial new logs on failure or
+interruption. Roll back log replacements if publication fails. Never overwrite
+existing media during acquisition; add numeric suffixes on filename collisions.
 
 JSONL retains message text and richer investigative metadata. TXT remains a
 minimal human-readable log, omitting empty fields. Do not add a separate

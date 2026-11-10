@@ -6,6 +6,8 @@ import argparse
 import mimetypes
 import sys
 import hashlib
+import shutil
+import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
@@ -510,6 +512,49 @@ def ensure_dir_path(path_value):
     return path_value + os.sep
 
 
+def publish_export_files(staged_paths, final_paths, staging_dir):
+    backups = {}
+    for index, target in enumerate(final_paths):
+        if os.path.exists(target):
+            backup = os.path.join(staging_dir, f"previous-{index}")
+            shutil.copy2(target, backup)
+            backups[target] = backup
+
+    published = []
+    try:
+        for staged, target in zip(staged_paths, final_paths):
+            os.replace(staged, target)
+            published.append((staged, target))
+    except BaseException:
+        # Roll back completed replacements if publishing either log fails.
+        for staged, target in reversed(published):
+            os.replace(target, staged)
+            if target in backups:
+                os.replace(backups[target], target)
+        raise
+
+
+@contextmanager
+def staged_message_export(download_dir, output_stem, result):
+    staging_dir = tempfile.mkdtemp(prefix=".acquisition-", dir=download_dir)
+    names = [f"{output_stem}.jsonl", f"{output_stem}.txt"]
+    staged_paths = [os.path.join(staging_dir, name) for name in names]
+    final_paths = [os.path.join(download_dir, name) for name in names]
+    result["manifest_path"], result["text_path"] = map(display_path, staged_paths)
+    try:
+        with open(staged_paths[0], "w", encoding="utf-8") as manifest_file, open(
+            staged_paths[1], "w", encoding="utf-8"
+        ) as text_file:
+            yield manifest_file, text_file
+        publish_export_files(staged_paths, final_paths, staging_dir)
+    except BaseException:
+        text_print(f"Incomplete acquisition retained in: {display_path(staging_dir)}")
+        raise
+    else:
+        result["manifest_path"], result["text_path"] = map(display_path, final_paths)
+        shutil.rmtree(staging_dir)
+
+
 def archive_revoked_session(session_path):
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     archive_path = f"{session_path}.revoked-{timestamp}"
@@ -605,8 +650,13 @@ def build_unique_media_target(message, media_dir):
     base_name = sanitize_path_segment(original_name)
     stem, ext = os.path.splitext(base_name)
     message_id = getattr(message, "id", "unknown")
-    unique_name = f"{message_id}_{stem}{ext}"
-    return os.path.join(media_dir, unique_name)
+    unique_stem = f"{message_id}_{stem}"
+    candidate = os.path.join(media_dir, f"{unique_stem}{ext}")
+    suffix = 1
+    while os.path.exists(candidate) or os.path.exists(f"{candidate}.temp"):
+        candidate = os.path.join(media_dir, f"{unique_stem}_{suffix}{ext}")
+        suffix += 1
+    return candidate
 
 
 def normalize_downloaded_media_path(downloaded_file, message):
@@ -823,12 +873,8 @@ def download_chat_content(
                 result["errors"].append(f"get_chat failed: {chat_error}")
 
             effective_stem = output_stem or build_messages_stem(result.get("chat_title"), chat_id)
-            manifest_path = os.path.join(download_dir, f"{effective_stem}.jsonl")
-            text_path = os.path.join(download_dir, f"{effective_stem}.txt")
-            result["manifest_path"] = display_path(manifest_path)
-            result["text_path"] = display_path(text_path)
 
-            with open(manifest_path, "w", encoding="utf-8") as manifest_file, open(text_path, "w", encoding="utf-8") as text_file:
+            with staged_message_export(download_dir, effective_stem, result) as (manifest_file, text_file):
                 def run_history_download():
                     history_kwargs = {"chat_id": chat_peer}
                     if history_limit and history_limit > 0:
