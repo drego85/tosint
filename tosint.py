@@ -614,6 +614,30 @@ def open_download_client(
         app.stop()
 
 
+def verify_download_identity(app, auth_mode, expected_bot_id=None):
+    # Client.start() populates me from Telegram, including for saved sessions.
+    identity = app.me
+    identity_id = getattr(identity, "id", None)
+    is_bot = getattr(identity, "is_bot", None)
+    if type(identity_id) is not int or identity_id <= 0 or not isinstance(is_bot, bool):
+        raise RuntimeError("Unable to verify the authenticated download session identity.")
+    if auth_mode == "bot" and (not is_bot or identity_id != expected_bot_id):
+        kind = "bot" if is_bot else "user"
+        raise RuntimeError(
+            f"Session identity mismatch: expected bot ID {expected_bot_id}, "
+            f"found {kind} ID {identity_id}. Use a different --session-name. "
+            "The existing session has not been replaced."
+        )
+    if auth_mode == "user" and is_bot:
+        raise RuntimeError(
+            f"Session identity mismatch: --download-auth user requires a user "
+            f"account, but this session belongs to bot ID {identity_id}. "
+            "Use a different --session-name or select --download-auth bot. "
+            "The existing session has not been replaced."
+        )
+    return identity
+
+
 def infer_media_extension(message):
     # Prefer original file extension when Telegram provides a file name.
     for attr in ("document", "audio", "video", "animation"):
@@ -775,12 +799,13 @@ def download_chat_content(
     start_message_id=None,
     bot_token_for_start=None,
     bot_token_for_auth=None,
-    download_auth_mode="auto",
+    download_auth_mode="bot",
     progress_every=50,
     skip_media=False,
     output_stem=None,
     batch_size=50,
-    hash_media=False
+    hash_media=False,
+    expected_bot_id=None
 ):
     if not 1 <= batch_size <= 200:
         raise ValueError("Download batch size must be between 1 and 200.")
@@ -788,6 +813,16 @@ def download_chat_content(
         raise ValueError("Download start message ID must be greater than zero.")
     if history_limit < 0:
         raise ValueError("Download limit must be zero or greater.")
+    if download_auth_mode not in ("bot", "user"):
+        raise ValueError("Download authentication mode must be bot or user.")
+    if download_auth_mode == "bot":
+        if not bot_token_for_auth:
+            raise RuntimeError("download auth mode 'bot' requires a valid bot token.")
+        if expected_bot_id is None:
+            token_id = bot_token_for_auth.removeprefix("bot").split(":", 1)[0]
+            if not token_id.isdigit() or int(token_id) <= 0:
+                raise ValueError("Unable to determine the expected bot ID from the token.")
+            expected_bot_id = int(token_id)
     try:
         from pyrogram import Client
         from pyrogram.errors import SessionRevoked
@@ -796,7 +831,6 @@ def download_chat_content(
             "Pyrofork is not installed. Run: pip install pyrofork"
         ) from error
 
-    os.makedirs(download_dir, exist_ok=True)
     session_dir = os.path.dirname(session_name)
     if session_dir:
         os.makedirs(session_dir, exist_ok=True)
@@ -820,6 +854,8 @@ def download_chat_content(
         "interrupted": False,
         "session_recovered": False,
         "revoked_session_archive": None,
+        "authenticated_user_id": None,
+        "authenticated_is_bot": None,
         "manifest_path": None,
         "text_path": None,
         "errors": [],
@@ -832,8 +868,6 @@ def download_chat_content(
         "api_hash": api_hash,
     }
     if download_auth_mode == "bot":
-        if not bot_token_for_auth:
-            raise RuntimeError("download auth mode 'bot' requires a valid bot token.")
         client_kwargs["bot_token"] = bot_token_for_auth
 
     recovery_info = {}
@@ -846,7 +880,11 @@ def download_chat_content(
             recover_revoked_session=download_auth_mode == "bot",
             recovery_info=recovery_info
         ) as app:
+            identity = verify_download_identity(app, download_auth_mode, expected_bot_id)
             result.update(recovery_info)
+            result["authenticated_user_id"] = identity.id
+            result["authenticated_is_bot"] = identity.is_bot
+            os.makedirs(download_dir, exist_ok=True)
             last_progress_scanned = 0
 
             def maybe_log_progress(current_message_id=None):
@@ -1153,7 +1191,8 @@ def run_analysis(args, report):
                     skip_media=args.skip_media_download,
                     output_stem=build_messages_stem(chat_title_for_files, telegram_chat_id),
                     batch_size=args.download_batch_size,
-                    hash_media=args.hash_media
+                    hash_media=args.hash_media,
+                    expected_bot_id=telegram_get_me["id"]
                 )
                 report["downloads"] = download_result
                 if download_result.get("interrupted"):

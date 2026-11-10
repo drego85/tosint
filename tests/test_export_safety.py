@@ -35,9 +35,11 @@ class ExportSafetyTests(unittest.TestCase):
             yield app
 
         options = dict(start_message_id=3, bot_token_for_auth="fake",
-                       download_auth_mode="bot", progress_every=0, batch_size=1)
+                       download_auth_mode="bot", progress_every=0, batch_size=1,
+                       expected_bot_id=123)
         options.update(kwargs)
         app.get_chat.return_value = SimpleNamespace(title="Example", type="group")
+        app.me = SimpleNamespace(id=123, is_bot=True)
         with patch.dict("sys.modules", {"pyrogram": pyrogram, "pyrogram.errors": errors}), patch.object(
             tosint, "open_download_client", client
         ), patch.object(tosint, "text_print"):

@@ -274,6 +274,14 @@ new paths creates a fresh session. Bot authentication uses the CLI token, while
 user authentication requires login. If you override `--session-name`, choose
 distinct paths for bot and user authentication to keep their sessions separate.
 
+Before reading chat content, Tosint verifies the identity loaded by Pyrofork.
+Bot sessions must match the bot ID validated through the Bot API; user mode
+requires a user account rather than a bot. A mismatch stops the download without
+replacing the session or modifying existing exports. Select another
+`--session-name` if the saved session belongs to a different identity.
+The download JSON report records `authenticated_user_id` and
+`authenticated_is_bot` after successful verification.
+
 ### Download overwrite modes (`--download-overwrite`)
 
 - `ask` (default): if the target chat's download directory already exists and is not empty, Tosint asks whether to continue.

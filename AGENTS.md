@@ -62,6 +62,10 @@ paths separate: `sessions/<bot_username>_<chat_reference>/bot.session` and
 Pyrofork's `bot_token` applies only to new sessions; it does not replace the
 identity of an existing session. Never assume that passing a token reauthenticates
 a reused session, especially with a custom `--session-name`.
+Verify the authenticated identity before reading chat content or creating export
+files. Bot mode must match the Bot API identity; user mode must not use a bot.
+Stop on mismatches without replacing the session, and record the verified ID
+and bot flag in the download report.
 
 In automatic mode, bot sessions use `idscan` directly. User sessions try history
 and may fall back to ID scan. Match batch responses by message ID, not position;
@@ -88,9 +92,7 @@ Do not contact real Telegram targets, initiate logins, reuse live sessions, or
 send test messages unless the user explicitly authorizes that verification.
 Use mocked clients and temporary directories for normal development tests.
 
-The remaining review follow-up is verifying the identity of reused sessions.
-Do not describe it as solved or introduce resume/deduplication between runs
-without approval.
+Do not introduce resume/deduplication between separate runs without approval.
 
 ## Export Contracts
 

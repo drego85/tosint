@@ -29,6 +29,7 @@ class IDScanBatchTests(unittest.TestCase):
 
     def run_download(self, start=123, limit=0, batch=50, missing=(), failure=None, auth="bot", progress=0, history=None):
         app = Mock()
+        app.me = SimpleNamespace(id=123, is_bot=auth == "bot")
         app.get_chat.return_value = SimpleNamespace(title="Example", type="group")
         app.get_chat_history.return_value = iter([])
         if history is not None:
@@ -53,7 +54,7 @@ class IDScanBatchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, patch.dict("sys.modules", {"pyrogram": pyrogram, "pyrogram.errors": errors}), patch.object(tosint, "open_download_client", client):
             result = tosint.download_chat_content(123, 1, "fake", "session", directory, limit,
                 start_message_id=start, bot_token_for_auth="fake", download_auth_mode=auth,
-                batch_size=batch, progress_every=progress)
+                batch_size=batch, progress_every=progress, expected_bot_id=123)
             rows = [json.loads(line) for line in Path(result["manifest_path"]).read_text().splitlines()]
         return app, result, rows
 
