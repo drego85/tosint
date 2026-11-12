@@ -92,19 +92,31 @@ Do not contact real Telegram targets, initiate logins, reuse live sessions, or
 send test messages unless the user explicitly authorizes that verification.
 Use mocked clients and temporary directories for normal development tests.
 
-Do not introduce resume/deduplication between separate runs without approval.
+Do not resume or skip message acquisition between separate runs. Attachment
+reuse across runs is supported under the checks described below.
 
 ## Export Contracts
 
 Keep each chat under `downloads/<bot_username>/<chat_id>/`, with sanitized
-`messages_<chat_title>.jsonl` and `.txt` filenames. Without a usable title,
+`YYYY.MM.DD_messages_<chat_title>.jsonl` and `.txt` filenames. Without a usable title,
 fall back to the chat ID. Keep attachment files in that chat's `media/` directory.
 Use message-ID-prefixed sanitized filenames to distinguish same-named attachments.
 Keep displayed and exported paths relative to the working directory.
-Stage TXT and JSONL in a separate `.acquisition-*` directory until acquisition
-completes. Preserve previous logs and retain partial new logs on failure or
-interruption. Roll back log replacements if publication fails. Never overwrite
-existing media during acquisition; add numeric suffixes on filename collisions.
+Use the local acquisition start date. Write directly to the dated logs without
+creating `.acquisition-*` directories. Preserve other days and legacy undated
+logs. The overwrite policy checks only today's target logs, not the presence
+of the chat directory. Same-day logs may be overwritten or left partial after
+failure or interruption; this is intentional. Do not delete older acquisitions.
+
+Keep one shared `media/` directory per chat. Load media references from that
+chat's previous JSONL exports before truncating today's logs. Reuse attachments
+only when media type, Telegram `file_unique_id`, recorded size, current Telegram
+size, local file existence, and actual size agree. Only reuse paths contained
+in that chat's media directory. Record reuse separately from downloads and
+failures; do not hash by default or skip exporting the associated message.
+Missing files or incomplete metadata require a new download. Never overwrite
+existing media; add numeric suffixes on filename collisions. These checks are
+not cryptographic integrity verification and cannot detect same-size changes.
 
 JSONL retains message text and richer investigative metadata. TXT remains a
 minimal human-readable log, omitting empty fields. Do not add a separate
@@ -122,7 +134,8 @@ other non-allowlisted media are not downloaded or counted as failures. Their
 messages remain exportable. `--skip-media-download` disables all attachments.
 Create `media/` only when an allowed download is attempted.
 
-SHA-256 hashing is opt-in through `--hash-media`, and belongs in JSONL only.
+SHA-256 hashing is opt-in through `--hash-media`, applies to new and reused
+attachments, and belongs in JSONL only.
 Hashing failure must not reclassify a successful download as failed. Do not
 introduce automatic media retries, default hashing, or content execution.
 

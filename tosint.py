@@ -6,8 +6,6 @@ import argparse
 import mimetypes
 import sys
 import hashlib
-import shutil
-import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
@@ -485,6 +483,11 @@ def build_messages_stem(chat_title=None, chat_id=None):
     return "messages_unknown"
 
 
+def build_daily_messages_stem(chat_title=None, chat_id=None, export_date=None):
+    day = export_date or datetime.now().date()
+    return f"{day.strftime('%Y.%m.%d')}_{build_messages_stem(chat_title, chat_id)}"
+
+
 def build_bot_download_dir(base_download_dir, bot_username, chat_id):
     bot_segment = sanitize_path_segment(bot_username or "unknown_bot")
     chat_segment = sanitize_path_segment(chat_id).strip(".") or "unknown"
@@ -499,8 +502,9 @@ def build_scoped_session_name(cli_session_name, chat_id, bot_username=None, down
     return os.path.join("sessions", f"{bot_segment}_{chat_segment}", download_auth_mode)
 
 
-def should_confirm_overwrite(path_value):
-    return os.path.isdir(path_value) and bool(os.listdir(path_value))
+def should_confirm_overwrite(download_dir, output_stem):
+    return any(os.path.exists(os.path.join(download_dir, f"{output_stem}.{extension}"))
+               for extension in ("jsonl", "txt"))
 
 
 def display_path(path_value):
@@ -516,47 +520,16 @@ def ensure_dir_path(path_value):
     return path_value + os.sep
 
 
-def publish_export_files(staged_paths, final_paths, staging_dir):
-    backups = {}
-    for index, target in enumerate(final_paths):
-        if os.path.exists(target):
-            backup = os.path.join(staging_dir, f"previous-{index}")
-            shutil.copy2(target, backup)
-            backups[target] = backup
-
-    published = []
-    try:
-        for staged, target in zip(staged_paths, final_paths):
-            os.replace(staged, target)
-            published.append((staged, target))
-    except BaseException:
-        # Roll back completed replacements if publishing either log fails.
-        for staged, target in reversed(published):
-            os.replace(target, staged)
-            if target in backups:
-                os.replace(backups[target], target)
-        raise
-
-
 @contextmanager
-def staged_message_export(download_dir, output_stem, result):
-    staging_dir = tempfile.mkdtemp(prefix=".acquisition-", dir=download_dir)
-    names = [f"{output_stem}.jsonl", f"{output_stem}.txt"]
-    staged_paths = [os.path.join(staging_dir, name) for name in names]
-    final_paths = [os.path.join(download_dir, name) for name in names]
-    result["manifest_path"], result["text_path"] = map(display_path, staged_paths)
-    try:
-        with open(staged_paths[0], "w", encoding="utf-8") as manifest_file, open(
-            staged_paths[1], "w", encoding="utf-8"
-        ) as text_file:
-            yield manifest_file, text_file
-        publish_export_files(staged_paths, final_paths, staging_dir)
-    except BaseException:
-        text_print(f"Incomplete acquisition retained in: {display_path(staging_dir)}")
-        raise
-    else:
-        result["manifest_path"], result["text_path"] = map(display_path, final_paths)
-        shutil.rmtree(staging_dir)
+def open_message_export(download_dir, output_stem, result):
+    manifest_path = os.path.join(download_dir, f"{output_stem}.jsonl")
+    text_path = os.path.join(download_dir, f"{output_stem}.txt")
+    result["manifest_path"] = display_path(manifest_path)
+    result["text_path"] = display_path(text_path)
+    with open(manifest_path, "w", encoding="utf-8") as manifest_file, open(
+        text_path, "w", encoding="utf-8"
+    ) as text_file:
+        yield manifest_file, text_file
 
 
 def archive_revoked_session(session_path):
@@ -708,24 +681,95 @@ def normalize_downloaded_media_path(downloaded_file, message):
         return downloaded_file
 
 
-def process_download_message(message, app, chat_id, download_dir, manifest_file, text_file, result, skip_media=False, hash_media=False):
+def media_reuse_key(media_type, file_unique_id, file_size):
+    kind = str(getattr(media_type, "value", media_type) or "").rsplit(".", 1)[-1].lower()
+    if kind not in DOWNLOADABLE_MEDIA_TYPES or not isinstance(file_unique_id, str) or not file_unique_id:
+        return None
+    if type(file_size) is not int or file_size < 0:
+        return None
+    return kind, file_unique_id, file_size
+
+
+def validated_local_media(download_dir, path, expected_size):
+    if not isinstance(path, str) or not path:
+        return None
+    try:
+        root = os.path.realpath(download_dir)
+        media_dir = os.path.realpath(os.path.join(download_dir, "media"))
+        candidate = os.path.realpath(path)
+        if os.path.commonpath([root, media_dir]) != root:
+            return None
+        if os.path.commonpath([media_dir, candidate]) != media_dir:
+            return None
+        if os.path.isfile(candidate) and os.path.getsize(candidate) == expected_size:
+            return os.path.abspath(path)
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def load_media_reuse_index(download_dir, chat_id, errors):
+    index = {}
+    try:
+        with os.scandir(download_dir) as entries:
+            manifests = sorted(entry.path for entry in entries
+                               if entry.is_file() and "messages_" in entry.name
+                               and entry.name.endswith(".jsonl"))
+    except OSError:
+        errors.append("Unable to list previous exports for media reuse.")
+        return index
+    for manifest in manifests:
+        try:
+            with open(manifest, encoding="utf-8") as source:
+                for line in source:
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        continue
+                    if not isinstance(record, dict):
+                        continue
+                    if normalize_chat_reference(record.get("chat_id")) != normalize_chat_reference(chat_id):
+                        continue
+                    size = record.get("downloaded_file_size")
+                    key = media_reuse_key(record.get("media_type"), record.get("file_unique_id"), size)
+                    if key is None or record.get("telegram_file_size") != size:
+                        continue
+                    path = validated_local_media(download_dir, record.get("downloaded_file"), size)
+                    if path:
+                        index.setdefault(key, set()).add(path)
+        except (OSError, UnicodeError):
+            errors.append(f"Unable to read media references from {display_path(manifest)}.")
+    return index
+
+
+def process_download_message(message, app, chat_id, download_dir, manifest_file, text_file, result, skip_media=False, hash_media=False, media_index=None):
     if not getattr(message, "date", None):
         return False
 
     downloaded_file = None
     media_type = getattr(message, "media", None)
     media_type_value = str(getattr(media_type, "value", media_type) or "").rsplit(".", 1)[-1].lower()
+    attachment = getattr(message, media_type_value, None) if media_type_value in DOWNLOADABLE_MEDIA_TYPES else None
+    reuse_key = media_reuse_key(media_type, getattr(attachment, "file_unique_id", None),
+                                getattr(attachment, "file_size", None))
 
     if not skip_media and media_type_value in DOWNLOADABLE_MEDIA_TYPES:
         try:
-            media_dir = os.path.join(download_dir, "media")
-            os.makedirs(media_dir, exist_ok=True)
-            target_file = build_unique_media_target(message, media_dir)
-            downloaded_file = app.download_media(message, file_name=target_file)
-            downloaded_file = normalize_downloaded_media_path(downloaded_file, message)
-            if downloaded_file:
-                result["media_downloaded"] += 1
-            else:
+            if media_index is not None and reuse_key is not None:
+                for path in sorted(media_index.get(reuse_key, ())):
+                    downloaded_file = validated_local_media(download_dir, path, reuse_key[2])
+                    if downloaded_file:
+                        result["media_reused"] = result.get("media_reused", 0) + 1
+                        break
+            if not downloaded_file:
+                media_dir = os.path.join(download_dir, "media")
+                os.makedirs(media_dir, exist_ok=True)
+                target_file = build_unique_media_target(message, media_dir)
+                downloaded_file = app.download_media(message, file_name=target_file)
+                downloaded_file = normalize_downloaded_media_path(downloaded_file, message)
+                if downloaded_file:
+                    result["media_downloaded"] += 1
+            if not downloaded_file:
                 result["media_failed"] += 1
                 result["errors"].append(
                     f"message_id={getattr(message, 'id', None)} download returned no file path"
@@ -740,6 +784,10 @@ def process_download_message(message, app, chat_id, download_dir, manifest_file,
     if downloaded_file:
         try:
             file_metadata["downloaded_file_size"] = os.path.getsize(downloaded_file)
+            if media_index is not None and reuse_key is not None:
+                path = validated_local_media(download_dir, downloaded_file, reuse_key[2])
+                if path:
+                    media_index.setdefault(reuse_key, set()).add(path)
         except OSError as error:
             result["errors"].append(f"message_id={message.id} file metadata error: {error}")
         if hash_media:
@@ -815,6 +863,7 @@ def download_chat_content(
         raise ValueError("Download start message ID must be greater than zero.")
     if history_limit < 0:
         raise ValueError("Download limit must be zero or greater.")
+    acquisition_date = datetime.now().date()
     if download_auth_mode not in ("bot", "user"):
         raise ValueError("Download authentication mode must be bot or user.")
     if download_auth_mode == "bot":
@@ -852,6 +901,7 @@ def download_chat_content(
         "unavailable_message_ids": 0,
         "messages_exported": 0,
         "media_downloaded": 0,
+        "media_reused": 0,
         "media_failed": 0,
         "interrupted": False,
         "session_recovered": False,
@@ -905,20 +955,29 @@ def download_chat_content(
                 text_print(
                     f"[DOWNLOAD] Progress: {scan_label}={result['messages_scanned']}{unavailable_part}, "
                     f"exported={result['messages_exported']}, media={result['media_downloaded']}, "
+                    f"media_reused={result['media_reused']}, "
                     f"media_failed={result['media_failed']}{current_id_part}"
                 )
                 last_progress_scanned = scanned
 
+            resolved_chat_id = chat_peer
             try:
                 chat = app.get_chat(chat_peer)
+                resolved_chat_id = getattr(chat, "id", None) or chat_peer
                 result["chat_title"] = getattr(chat, "title", None) or getattr(chat, "first_name", None)
                 result["chat_type"] = str(getattr(chat, "type", "unknown"))
             except Exception as chat_error:
                 result["errors"].append(f"get_chat failed: {chat_error}")
 
-            effective_stem = output_stem or build_messages_stem(result.get("chat_title"), chat_id)
+            effective_stem = output_stem or build_daily_messages_stem(
+                result.get("chat_title"), chat_id, acquisition_date
+            )
+            # Snapshot previous references before today's logs are truncated.
+            media_index = {} if skip_media else load_media_reuse_index(
+                download_dir, resolved_chat_id, result["errors"]
+            )
 
-            with staged_message_export(download_dir, effective_stem, result) as (manifest_file, text_file):
+            with open_message_export(download_dir, effective_stem, result) as (manifest_file, text_file):
                 exported_ids = set()
 
                 def export_message(message):
@@ -927,7 +986,8 @@ def download_chat_content(
                         return
                     if process_download_message(
                         message, app, chat_peer, download_dir, manifest_file,
-                        text_file, result, skip_media=skip_media, hash_media=hash_media
+                        text_file, result, skip_media=skip_media, hash_media=hash_media,
+                        media_index=media_index
                     ):
                         exported_ids.add(message_id)
 
@@ -1035,7 +1095,7 @@ def main():
     parser.add_argument('--api-hash', type=str, help='Telegram API_HASH for user session (Pyrofork)')
     parser.add_argument('--session-name', type=str, default=None, help='Pyrofork session name/path override. By default: sessions/<bot>_<chat>/<bot|user>, based on --download-auth')
     parser.add_argument('--download-dir', type=str, default='downloads', help='Directory where messages/media are saved (default: downloads)')
-    parser.add_argument('--download-overwrite', choices=['ask', 'always', 'never'], default='ask', help='How to handle an existing non-empty download directory: ask, always, or never (default: ask)')
+    parser.add_argument('--download-overwrite', choices=['ask', 'always', 'never'], default='ask', help="How to handle today's existing export files: ask, always, or never (default: ask)")
     parser.add_argument('--download-limit', type=int, default=0, help='Max messages to export (0 = all)')
     parser.add_argument('--download-mode', type=str, choices=['auto', 'history', 'idscan'], default='auto', help='Download strategy: auto (bot: idscan; user: history with idscan fallback), history, or idscan')
     parser.add_argument('--download-auth', type=str, choices=['bot', 'user'], default='bot', help='Download auth mode: bot (default, uses -t token) or user (interactive login)')
@@ -1136,19 +1196,20 @@ def run_analysis(args, report):
             report["errors"].append("download auth mode 'bot' requires a valid bot token.")
             text_print("ATTENTION download auth mode 'bot' requires a valid bot token.")
             return
-        if should_confirm_overwrite(target_download_dir):
+        output_stem = build_daily_messages_stem(chat_title_for_files, telegram_chat_id)
+        if should_confirm_overwrite(target_download_dir, output_stem):
             text_print(
-                f"ATTENTION Existing download data found in: {display_path(target_download_dir)}"
+                f"ATTENTION Today's export already exists in: {display_path(target_download_dir)}"
             )
             if args.download_overwrite == "never":
                 text_print("Download phase skipped because --download-overwrite is set to never.")
-                report["errors"].append("download skipped because output directory already existed and overwrite policy was set to never")
+                report["errors"].append("download skipped because today's export already existed and overwrite policy was set to never")
                 return
             if args.download_overwrite == "ask":
-                confirmation = input("Do you want to continue and overwrite previously exported files? (y/N): ").strip().lower()
+                confirmation = input("Do you want to overwrite today's exported files? (y/N): ").strip().lower()
                 if confirmation != "y":
                     text_print("Download phase skipped by user.")
-                    report["errors"].append("download skipped by user because output directory already existed")
+                    report["errors"].append("download skipped by user because today's export already existed")
                     return
 
         print_section("DOWNLOAD")
@@ -1191,7 +1252,7 @@ def run_analysis(args, report):
                     download_auth_mode=resolved_download_auth,
                     progress_every=args.download_progress_every,
                     skip_media=args.skip_media_download,
-                    output_stem=build_messages_stem(chat_title_for_files, telegram_chat_id),
+                    output_stem=output_stem,
                     batch_size=args.download_batch_size,
                     hash_media=args.hash_media,
                     expected_bot_id=telegram_get_me["id"]
@@ -1214,6 +1275,7 @@ def run_analysis(args, report):
                     text_print(f"Unavailable Message IDs: {download_result['unavailable_message_ids']}")
                 text_print(f"Messages Exported: {download_result['messages_exported']}")
                 text_print(f"Media Downloaded: {download_result['media_downloaded']}")
+                text_print(f"Media Reused: {download_result.get('media_reused', 0)}")
                 text_print(f"Media Failed: {download_result['media_failed']}")
             except Exception as error:
                 report["errors"].append(f"downloads error: {error}")

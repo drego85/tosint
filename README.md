@@ -121,7 +121,7 @@ SHA-256 hashing is disabled by default. Enable it explicitly with:
 python3 tosint.py -t <TELEGRAM_BOT_TOKEN> -c <TELEGRAM_CHAT_ID> --download --hash-media
 ```
 
-Hashes appear as `sha256` in JSONL only for downloaded files when requested.
+Hashes appear as `sha256` in JSONL only for downloaded or reused files when requested.
 Hashing reads each entire file in chunks and can add time for large downloads.
 Hash failures are recorded without treating a successful download as failed.
 The TXT format stays minimal, and no separate acquisition file is created.
@@ -224,16 +224,18 @@ a history fallback.
 Exports are saved under `downloads/<bot_username>/<chat_id>/`:
 
 ```text
-messages_<chat_title_sanitized>.jsonl
-messages_<chat_title_sanitized>.txt
+2026.11.12_messages_<chat_title_sanitized>.jsonl
+2026.11.12_messages_<chat_title_sanitized>.txt
 media/
 ```
 
-The `media/` directory is created when an attachment download is attempted.
+The prefix is the local date when acquisition starts. Logs are written directly
+to these files, without a temporary acquisition directory. The shared `media/`
+directory is created when an attachment download is attempted.
 
 Each chat has a separate export directory, including when the same bot is used
 for multiple chats. For chats without a title, filenames use the chat ID, for
-example `downloads/chartid_bot/5901023723/messages_5901023723.jsonl`.
+example `downloads/chartid_bot/5901023723/2026.11.12_messages_5901023723.jsonl`.
 Existing exports in the previous directory layout are left unchanged.
 
 ID scan retrieves up to 50 message IDs per request by default. Configure this
@@ -250,6 +252,20 @@ animated and video stickers), GIFs/animations, link previews, dice and other
 media types are excluded from file downloads and do not count as failed
 downloads. Their messages are still exported to TXT and JSONL; emoji within
 message text are preserved. Use `--skip-media-download` to skip all attachments.
+
+Attachments are shared across daily exports of the same chat. Before downloading,
+Tosint checks previous JSONL records for a matching media type, `file_unique_id`
+and size, and verifies that the referenced file still exists in that chat's
+`media/` directory with the expected size. Matching files are reused and their
+paths appear in the new TXT and JSONL. Missing, changed or insufficiently
+documented files are downloaded again without overwriting existing attachments.
+Same-named new files receive numeric suffixes.
+
+The progress and JSON report include `media_reused`; the final text summary shows
+`Media Reused` separately from new downloads and failures. Reuse does not require
+SHA-256 hashing and does not detect local content changes that preserve file size.
+`--hash-media` also hashes reused files when requested. Message history is still
+acquired afresh on every run; only attachment transfers are deduplicated.
 
 ### Download authentication modes (`--download-auth`)
 
@@ -284,18 +300,17 @@ The download JSON report records `authenticated_user_id` and
 
 ### Download overwrite modes (`--download-overwrite`)
 
-- `ask` (default): if the target chat's download directory already exists and is not empty, Tosint asks whether to continue.
-- `always`: continue without prompting and reuse the existing directory.
-- `never`: skip the download when the target directory already exists and is not empty.
+- `ask` (default): ask before overwriting today's existing export files.
+- `always`: overwrite today's export files without prompting.
+- `never`: skip the download if today's export files already exist.
 
-TXT and JSONL logs are written in a separate `.acquisition-*` working directory
-and replace the previous logs only after acquisition completes. On failure or
-interruption, the previous logs remain unchanged and the working directory is
-retained for inspection. Its path is reported in text output; interrupted
-downloads also return their partial log paths in the JSON report.
-If publishing either log fails, Tosint attempts to restore the previous pair.
-Existing attachment files are kept; new filename collisions receive a numeric
-suffix, so a failed run cannot overwrite media referenced by a previous export.
+Exports from other dates and legacy undated logs are preserved. An existing chat
+directory alone does not trigger the overwrite policy. Repeating an export on
+the same day replaces that day's logs rather than creating another snapshot.
+If the new run fails or is interrupted, today's files may be empty or partial;
+previous days remain unchanged. Attachment references are read before truncating
+today's logs, allowing media reuse even on the same day. Existing media and older
+`.acquisition-*` directories are not deleted or migrated automatically.
 
 Example:
 
@@ -315,7 +330,7 @@ python3 tosint.py -t <TELEGRAM_BOT_TOKEN> -c <TELEGRAM_CHAT_ID> --downloads --do
 - `--api-hash`: Telegram API hash (used by `--downloads`)
 - `--session-name`: Pyrofork session name/path override. If omitted, Tosint uses `sessions/<bot>_<chat>/bot` or `sessions/<bot>_<chat>/user`, according to `--download-auth`
 - `--download-dir`: target folder for downloaded content (default: `downloads`)
-- `--download-overwrite`: overwrite policy for an existing non-empty download directory: `ask`, `always`, or `never` (default: `ask`)
+- `--download-overwrite`: overwrite policy for today's export files: `ask`, `always`, or `never` (default: `ask`)
 - `--download-limit`: max messages to export (`0` = all; negative values are rejected)
 - `--download-mode`: `auto`, `history`, `idscan` (default: `auto`)
 - `--download-auth`: `bot`, `user` (default: `bot`)

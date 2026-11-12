@@ -1,6 +1,5 @@
 import io
 import json
-import os
 import tempfile
 import unittest
 from contextlib import contextmanager
@@ -13,16 +12,18 @@ import tosint
 
 
 class ExportSafetyTests(unittest.TestCase):
+    today_stem = "2026.11.12_messages_example"
+
     def message(self, message_id=3):
         return SimpleNamespace(id=message_id, date=datetime(2026, 11, 10), text="New message")
 
     def previous_export(self, directory):
         for extension in ("jsonl", "txt"):
-            Path(directory, f"messages_example.{extension}").write_text(f"Previous {extension}")
+            Path(directory, f"2026.11.11_messages_example.{extension}").write_text(f"Previous {extension}")
 
     def assert_previous_export(self, directory):
         for extension in ("jsonl", "txt"):
-            self.assertEqual(Path(directory, f"messages_example.{extension}").read_text(),
+            self.assertEqual(Path(directory, f"2026.11.11_messages_example.{extension}").read_text(),
                              f"Previous {extension}")
 
     def download(self, directory, app, **kwargs):
@@ -37,7 +38,7 @@ class ExportSafetyTests(unittest.TestCase):
 
         options = dict(start_message_id=3, bot_token_for_auth="fake",
                        download_auth_mode="bot", progress_every=0, batch_size=1,
-                       expected_bot_id=123)
+                       expected_bot_id=123, output_stem=self.today_stem)
         options.update(kwargs)
         app.get_chat.return_value = SimpleNamespace(title="Example", type="group")
         app.me = SimpleNamespace(id=123, is_bot=True)
@@ -78,7 +79,7 @@ class ExportSafetyTests(unittest.TestCase):
             self.assert_previous_export(directory)
             self.assertEqual(old_media.read_text(), "Previous attachment")
             self.assertEqual((media_dir / "3_report_1.txt").read_text(), "New attachment")
-            partial = next(Path(directory).glob(".acquisition-*/messages_example.jsonl"))
+            partial = Path(directory, f"{self.today_stem}.jsonl")
             payload = json.loads(partial.read_text())
             self.assertEqual(payload["message_id"], 3)
             self.assertTrue(Path(payload["downloaded_file"]).is_file())
@@ -91,39 +92,97 @@ class ExportSafetyTests(unittest.TestCase):
             result = self.download(directory, app)
             self.assertTrue(result["interrupted"])
             self.assert_previous_export(directory)
-            self.assertIn(".acquisition-", result["manifest_path"])
+            self.assertEqual(Path(result["manifest_path"]).parent.resolve(), Path(directory).resolve())
             self.assertEqual(json.loads(Path(result["manifest_path"]).read_text())["message_id"], 3)
             self.assertTrue(Path(result["text_path"]).is_file())
 
-    def test_success_publishes_both_logs_and_removes_working_directory(self):
+    def test_success_writes_daily_logs_without_a_working_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             self.previous_export(directory)
             app = Mock()
             app.get_messages.side_effect = [[self.message()], [], []]
             result = self.download(directory, app)
             self.assertEqual(Path(result["manifest_path"]).resolve(),
-                             Path(directory, "messages_example.jsonl").resolve())
+                             Path(directory, f"{self.today_stem}.jsonl").resolve())
             self.assertIn("New message", Path(result["text_path"]).read_text())
             self.assertEqual(list(Path(directory).glob(".acquisition-*")), [])
 
-    def test_second_log_publish_failure_rolls_back_the_first(self):
+    def test_same_day_logs_are_overwritten_directly(self):
         with tempfile.TemporaryDirectory() as directory:
             self.previous_export(directory)
-            replace = os.replace
-
-            def fail_second_log(source, target):
-                if Path(source).name == "messages_example.txt" and Path(target).parent == Path(directory):
-                    raise OSError("publication failed")
-                return replace(source, target)
-
+            for extension in ("jsonl", "txt"):
+                Path(directory, f"{self.today_stem}.{extension}").write_text("Earlier today")
             app = Mock()
             app.get_messages.side_effect = [[self.message()], [], []]
-            with patch.object(tosint.os, "replace", side_effect=fail_second_log):
-                with self.assertRaisesRegex(OSError, "publication failed"):
-                    self.download(directory, app)
+            result = self.download(directory, app)
             self.assert_previous_export(directory)
-            partial = next(Path(directory).glob(".acquisition-*/messages_example.jsonl"))
-            self.assertEqual(json.loads(partial.read_text())["message_id"], 3)
+            self.assertEqual(json.loads(Path(result["manifest_path"]).read_text())["message_id"], 3)
+            self.assertNotIn("Earlier today", Path(result["text_path"]).read_text())
+
+    def test_failed_same_day_run_can_leave_today_empty_but_preserves_yesterday(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.previous_export(directory)
+            for extension in ("jsonl", "txt"):
+                Path(directory, f"{self.today_stem}.{extension}").write_text("Earlier today")
+            app = Mock()
+            app.get_messages.side_effect = RuntimeError("request failed")
+            with self.assertRaisesRegex(RuntimeError, "request failed"):
+                self.download(directory, app)
+            self.assert_previous_export(directory)
+            self.assertEqual(Path(directory, f"{self.today_stem}.jsonl").read_text(), "")
+            self.assertEqual(list(Path(directory).glob(".acquisition-*")), [])
+
+    def test_same_day_media_references_are_loaded_before_overwriting_logs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            media_dir = Path(directory, "media")
+            media_dir.mkdir()
+            existing = media_dir / "3_report.txt"
+            existing.write_bytes(b"abc")
+            message = self.message()
+            message.media = "MessageMediaType.DOCUMENT"
+            message.document = SimpleNamespace(file_name="report.txt", file_unique_id="unique",
+                                               file_size=3)
+            record = {"chat_id": 123, "media_type": message.media, "file_unique_id": "unique",
+                      "telegram_file_size": 3, "downloaded_file_size": 3,
+                      "downloaded_file": tosint.display_path(str(existing))}
+            Path(directory, f"{self.today_stem}.jsonl").write_text(json.dumps(record) + "\n")
+            app = Mock()
+            app.get_messages.side_effect = [[message], [], []]
+            result = self.download(directory, app)
+            app.download_media.assert_not_called()
+            self.assertEqual(result["media_reused"], 1)
+            self.assertEqual(result["media_downloaded"], 0)
+            self.assertEqual(Path(json.loads(Path(result["manifest_path"]).read_text())[
+                "downloaded_file"]).resolve(), existing.resolve())
+
+    def test_other_days_preserve_messages_no_longer_returned_by_telegram(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first_app = Mock()
+            first_app.get_messages.side_effect = [[self.message(3)], [self.message(2)], []]
+            first = self.download(directory, first_app)
+            second_app = Mock()
+            second_app.get_messages.side_effect = [[self.message(3)], [], []]
+            second = self.download(directory, second_app,
+                                   output_stem="2026.11.13_messages_example")
+            old_ids = [row["message_id"] for row in map(
+                json.loads, Path(first["manifest_path"]).read_text().splitlines())]
+            new_ids = [row["message_id"] for row in map(
+                json.loads, Path(second["manifest_path"]).read_text().splitlines())]
+            self.assertEqual(old_ids, [3, 2])
+            self.assertEqual(new_ids, [3])
+
+    def test_first_export_creates_logs_directly_before_reading_messages(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Mock()
+
+            def get_messages(chat, ids, replies):
+                self.assertTrue(Path(directory, f"{self.today_stem}.jsonl").is_file())
+                self.assertTrue(Path(directory, f"{self.today_stem}.txt").is_file())
+                self.assertEqual(list(Path(directory).glob(".acquisition-*")), [])
+                return [self.message(message_id) for message_id in ids]
+
+            app.get_messages.side_effect = get_messages
+            self.assertEqual(self.download(directory, app)["messages_exported"], 3)
 
     def test_media_target_avoids_both_existing_files_and_partial_downloads(self):
         with tempfile.TemporaryDirectory() as directory:
