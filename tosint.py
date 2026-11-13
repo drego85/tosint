@@ -7,7 +7,7 @@ import mimetypes
 import sys
 import hashlib
 import sqlite3
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext, redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -367,13 +367,23 @@ def load_env_file(env_path):
     return env_values
 
 
+def prompt_input(prompt):
+    if not TEXT_OUTPUT_ENABLED:
+        print(prompt, end="", file=sys.stderr, flush=True)
+        return input()
+    return input(prompt)
+
+
 def get_value(cli_value, env_values, env_key=None, prompt_text=None):
     if cli_value is not None and str(cli_value).strip():
         return str(cli_value).strip()
     if env_key and env_values.get(env_key):
         return env_values[env_key].strip()
     if prompt_text:
-        return input(prompt_text).strip()
+        try:
+            return prompt_input(prompt_text).strip()
+        except EOFError:
+            return None
     return None
 
 
@@ -538,10 +548,7 @@ def should_confirm_overwrite(download_dir, output_stem):
 def confirm_export_overwrite():
     prompt = "Do you want to overwrite today's exported files? (y/N): "
     try:
-        if TEXT_OUTPUT_ENABLED:
-            return input(prompt).strip().lower() == "y"
-        print(prompt, end="", file=sys.stderr, flush=True)
-        return input().strip().lower() == "y"
+        return prompt_input(prompt).strip().lower() == "y"
     except EOFError:
         return False
 
@@ -1397,7 +1404,9 @@ def main():
 
     report = {"errors": []}
     try:
-        run_analysis(args, report)
+        # Interactive libraries may print directly instead of using text_print.
+        with (redirect_stdout(sys.stderr) if args.json else nullcontext()):
+            run_analysis(args, report)
     except TelegramAPIError as error:
         report["errors"].append(str(error))
         text_print(f"ATTENTION {error}")

@@ -95,6 +95,9 @@ Tosint supports both human-readable and JSON output.
 - `--json-file <path>`: save JSON report to file
 - `--json --json-file <path>`: JSON on stdout + JSON saved to file
 
+With `--json`, credential/login prompts and library console output use stderr;
+stdout contains only the final JSON report. Interactive input still uses stdin.
+
 Message exports use a minimal TXT format and a richer JSONL format. Only JSONL
 includes the source `chat_id`, UTC message/edit timestamps, reply message ID,
 per-message acquisition timestamp (`acquired_at`), original attachment name,

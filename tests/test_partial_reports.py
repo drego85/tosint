@@ -18,7 +18,7 @@ class PartialReportTests(unittest.TestCase):
                                from_user=SimpleNamespace(id=123), outgoing=True,
                                date=datetime(2026, 11, 13), text="Synthetic message")
 
-    def run_cli(self, directory, app, json_stdout=True, stop_error=None):
+    def run_cli(self, directory, app, json_stdout=True, stop_error=None, interactive_credentials=False):
         def api(token, method, params=None):
             values = {"getMe": {"id": 123, "first_name": "Synthetic", "username": "synthetic_bot"},
                       "getChat": {"id": 456, "type": "private"}, "getChatMember": {"status": "member"},
@@ -37,17 +37,20 @@ class PartialReportTests(unittest.TestCase):
         app.get_chat.return_value = SimpleNamespace(id=456, type="private", title=None)
         destination = Path(directory, "report.json")
         arguments = ["tosint.py", "-t", "123:synthetic", "-c", "456", "--download",
-                     "--api-id", "1", "--api-hash", "synthetic", "--map-recipients",
+                     "--map-recipients",
                      "--download-start-id", "3", "--download-batch-size", "1",
                      "--download-dir", str(Path(directory, "data")),
                      "--session-name", str(Path(directory, "session", "bot")),
                      "--json-file", str(destination)]
         if json_stdout:
             arguments.append("--json")
+        if not interactive_credentials:
+            arguments.extend(["--api-id", "1", "--api-hash", "synthetic"])
         with patch.object(sys, "argv", arguments), patch.object(tosint, "telegram_api_get", side_effect=api), \
                 patch.object(tosint, "telegram_api_request", side_effect=AssertionError("Unexpected network call")), \
                 patch.object(tosint, "load_env_file", return_value={}), \
-                patch.object(tosint, "open_download_client", client), contextlib.redirect_stdout(io.StringIO()) as output:
+                patch.object(tosint, "open_download_client", client), patch("sys.stdin", io.StringIO("1\nsynthetic\n")), \
+                contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(io.StringIO()):
             status = tosint.main()
         saved = json.loads(destination.read_text())
         if json_stdout:
@@ -70,6 +73,14 @@ class PartialReportTests(unittest.TestCase):
             self.assertEqual(entry["messages_exported"], 1)
             self.assertEqual(json.loads(Path(entry["manifest_path"]).read_text())["message_id"], 3)
             self.assertIn("Synthetic transport failure", report["errors"][0])
+
+    def test_interactive_credentials_keep_cli_stdout_machine_readable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Mock()
+            app.get_messages.return_value = []
+            status, report, _ = self.run_cli(directory, app, interactive_credentials=True)
+            self.assertEqual(status, 0)
+            self.assertFalse(report["downloads"]["failed"])
 
     def test_failure_before_first_message_retains_zero_counts_and_paths(self):
         with tempfile.TemporaryDirectory() as directory:

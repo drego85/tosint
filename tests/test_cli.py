@@ -82,6 +82,53 @@ class CLIValidationTests(unittest.TestCase):
 
 
 class JSONReportTests(unittest.TestCase):
+    def test_credentials_and_library_output_use_stderr_in_json_mode(self):
+        def analysis(args, report):
+            print("Synthetic library login banner")
+            report["api_id_received"] = tosint.get_value(None, {}, prompt_text="Telegram API_ID: ")
+            report["api_hash_received"] = tosint.get_value(None, {}, prompt_text="Telegram API_HASH: ")
+
+        with patch.object(sys, "argv", ["tosint.py", "-t", "fake", "--json"]), patch.object(
+            tosint, "run_analysis", side_effect=analysis
+        ), patch("sys.stdin", io.StringIO("1\nsynthetic\n")), contextlib.redirect_stdout(io.StringIO()) as output, \
+                contextlib.redirect_stderr(io.StringIO()) as stderr:
+            status = tosint.main()
+        self.assertEqual(status, 0)
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["api_id_received"], "1")
+        self.assertEqual(report["api_hash_received"], "synthetic")
+        self.assertIn("Synthetic library login banner", stderr.getvalue())
+        self.assertIn("Telegram API_ID:", stderr.getvalue())
+        self.assertIn("Telegram API_HASH:", stderr.getvalue())
+
+    def test_stdout_is_restored_after_analysis_error_or_interruption(self):
+        for error, expected in ((tosint.TelegramAPIError("Synthetic failure"), 1), (KeyboardInterrupt(), 130)):
+            with self.subTest(error=type(error).__name__), patch.object(sys, "argv", ["tosint.py", "-t", "fake", "--json"]), \
+                    patch.object(tosint, "run_analysis", side_effect=error), \
+                    contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(tosint.main(), expected)
+                self.assertTrue(json.loads(output.getvalue())["errors"])
+
+    def test_non_json_mode_keeps_interactive_output_on_stdout(self):
+        def analysis(args, report):
+            print("Synthetic banner")
+            tosint.get_value(None, {}, prompt_text="Synthetic prompt: ")
+
+        with patch.object(sys, "argv", ["tosint.py", "-t", "fake"]), patch.object(tosint, "run_analysis", side_effect=analysis), \
+                patch("sys.stdin", io.StringIO("answer\n")), contextlib.redirect_stdout(io.StringIO()) as output, \
+                contextlib.redirect_stderr(io.StringIO()) as stderr:
+            self.assertEqual(tosint.main(), 0)
+        self.assertIn("Synthetic banner", output.getvalue())
+        self.assertIn("Synthetic prompt:", output.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_missing_prompt_input_returns_none_without_corrupting_json_output(self):
+        with patch.object(tosint, "TEXT_OUTPUT_ENABLED", False), patch("sys.stdin", io.StringIO()), \
+                contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(io.StringIO()) as stderr:
+            self.assertIsNone(tosint.get_value(None, {}, prompt_text="Synthetic prompt: "))
+        self.assertEqual(output.getvalue(), "")
+        self.assertIn("Synthetic prompt:", stderr.getvalue())
+
     def test_stdout_includes_report_save_failure_and_exit_is_nonzero(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(sys, "argv", [
             "tosint.py", "-t", "fake", "--json", "--json-file", directory
