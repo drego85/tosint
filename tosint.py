@@ -409,7 +409,7 @@ def message_to_json(message, downloaded_file=None, chat_id=None, file_metadata=N
     media_attr = str(getattr(media, "value", media) or "").rsplit(".", 1)[-1].lower()
     attachment = getattr(message, media_attr, None) if media_attr in DOWNLOADABLE_MEDIA_TYPES else None
     payload = {
-        "chat_id": getattr(chat, "id", None) or normalize_chat_reference(chat_id),
+        "chat_id": getattr(chat, "id", None),
         "message_id": getattr(message, "id", None),
         "date": date_value,
         "edit_date": format_utc_datetime(getattr(message, "edit_date", None)),
@@ -770,8 +770,17 @@ def load_media_reuse_index(download_dir, chat_id, errors):
     return index
 
 
+def message_matches_chat(message, chat_id):
+    actual_id = getattr(getattr(message, "chat", None), "id", None)
+    target_id = normalize_chat_reference(chat_id)
+    return type(actual_id) is int and type(target_id) is int and actual_id == target_id
+
+
 def process_download_message(message, app, chat_id, download_dir, manifest_file, text_file, result, skip_media=False, hash_media=False, media_index=None):
     if not getattr(message, "date", None):
+        return False
+    if not message_matches_chat(message, chat_id):
+        result["messages_filtered"] = result.get("messages_filtered", 0) + 1
         return False
 
     downloaded_file = None
@@ -929,6 +938,7 @@ def download_chat_content(
         "messages_scanned": 0,
         "unavailable_message_ids": 0,
         "messages_exported": 0,
+        "messages_filtered": 0,
         "media_downloaded": 0,
         "media_reused": 0,
         "media_failed": 0,
@@ -966,7 +976,6 @@ def download_chat_content(
             result.update(recovery_info)
             result["authenticated_user_id"] = identity.id
             result["authenticated_is_bot"] = identity.is_bot
-            os.makedirs(download_dir, exist_ok=True)
             last_progress_scanned = 0
 
             def maybe_log_progress(current_message_id=None):
@@ -984,7 +993,8 @@ def download_chat_content(
                 )
                 text_print(
                     f"[DOWNLOAD] Progress: {scan_label}={result['messages_scanned']}{unavailable_part}, "
-                    f"exported={result['messages_exported']}, media={result['media_downloaded']}, "
+                    f"exported={result['messages_exported']}, filtered={result['messages_filtered']}, "
+                    f"media={result['media_downloaded']}, "
                     f"media_reused={result['media_reused']}, "
                     f"media_failed={result['media_failed']}{current_id_part}"
                 )
@@ -993,11 +1003,20 @@ def download_chat_content(
             resolved_chat_id = chat_peer
             try:
                 chat = app.get_chat(chat_peer)
-                resolved_chat_id = getattr(chat, "id", None) or chat_peer
+                candidate = getattr(chat, "id", None)
+                if type(candidate) is int:
+                    resolved_chat_id = candidate
                 result["chat_title"] = getattr(chat, "title", None) or getattr(chat, "first_name", None)
                 result["chat_type"] = str(getattr(chat, "type", "unknown"))
             except Exception as chat_error:
                 result["errors"].append(f"get_chat failed: {chat_error}")
+
+            if type(resolved_chat_id) is not int or resolved_chat_id == 0:
+                raise RuntimeError("Unable to resolve the target chat to a numeric ID; acquisition stopped.")
+            if type(chat_peer) is int and chat_peer != resolved_chat_id:
+                raise RuntimeError("Resolved chat ID does not match the requested target; acquisition stopped.")
+            chat_peer = resolved_chat_id
+            os.makedirs(download_dir, exist_ok=True)
 
             effective_stem = output_stem or build_daily_messages_stem(
                 result.get("chat_title"), chat_id, acquisition_date
@@ -1012,7 +1031,7 @@ def download_chat_content(
 
                 def export_message(message):
                     message_id = getattr(message, "id", None)
-                    if message_id in exported_ids:
+                    if message_id in exported_ids and message_matches_chat(message, chat_peer):
                         return
                     if process_download_message(
                         message, app, chat_peer, download_dir, manifest_file,
@@ -1022,9 +1041,8 @@ def download_chat_content(
                         exported_ids.add(message_id)
 
                 def run_history_download():
+                    # Enforce the export limit after chat validation, not on raw results.
                     history_kwargs = {"chat_id": chat_peer}
-                    if history_limit and history_limit > 0:
-                        history_kwargs["limit"] = history_limit
 
                     try:
                         history = iter(app.get_chat_history(**history_kwargs))
@@ -1069,7 +1087,7 @@ def download_chat_content(
                     if result["start_message_id"]:
                         return int(result["start_message_id"])
                     if bot_token_for_start:
-                        derived_id, cleanup_error = resolve_start_message_id_with_bot(bot_token_for_start, chat_id)
+                        derived_id, cleanup_error = resolve_start_message_id_with_bot(bot_token_for_start, chat_peer)
                         result["start_message_id"] = int(derived_id)
                         if cleanup_error:
                             result["errors"].append(cleanup_error)
@@ -1304,6 +1322,7 @@ def run_analysis(args, report):
                 if download_result['download_mode_used'] == "idscan":
                     text_print(f"Unavailable Message IDs: {download_result['unavailable_message_ids']}")
                 text_print(f"Messages Exported: {download_result['messages_exported']}")
+                text_print(f"Messages Filtered (Other/Unknown Chat): {download_result.get('messages_filtered', 0)}")
                 text_print(f"Media Downloaded: {download_result['media_downloaded']}")
                 text_print(f"Media Reused: {download_result.get('media_reused', 0)}")
                 text_print(f"Media Failed: {download_result['media_failed']}")

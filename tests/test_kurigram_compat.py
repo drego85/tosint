@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import io
 import json
 import os
 import sqlite3
@@ -9,7 +10,7 @@ import unittest
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pyrogram
 from pyrogram import Client, enums, raw, types, utils
@@ -55,6 +56,30 @@ class KurigramCompatibilityTests(unittest.TestCase):
         app = self.client()
         self.assertEqual([message.id for message in app.get_chat_history(456, limit=1)], [42])
         app.invoke.assert_awaited_once()
+
+    def test_real_private_batch_can_include_another_dialog_but_export_filters_it(self):
+        app = self.client()
+        app.invoke.return_value.messages.append(raw.types.Message(
+            id=40, peer_id=raw.types.PeerUser(user_id=999), date=1784116800,
+            message="Foreign dialog content", out=True, entities=[], restriction_reason=[],
+            from_id=raw.types.PeerUser(user_id=123)
+        ))
+        app.invoke.return_value.users.append(raw.types.User(
+            id=999, first_name="Foreign", usernames=[], restriction_reason=[]
+        ))
+        messages = app.get_messages(456, [42, 41, 40], replies=0)
+        self.assertIsInstance(app.invoke.call_args.args[0], raw.functions.messages.GetMessages)
+        self.assertEqual([message.chat.id for message in messages if message.date], [456, 999])
+        manifest, text = io.StringIO(), io.StringIO()
+        result = {"messages_exported": 0, "media_downloaded": 0, "media_failed": 0, "errors": []}
+        with tempfile.TemporaryDirectory() as directory:
+            for message in messages:
+                tosint.process_download_message(message, Mock(), 456, directory, manifest, text, result)
+        self.assertEqual(result["messages_exported"], 1)
+        self.assertEqual(result["messages_filtered"], 1)
+        self.assertEqual(json.loads(manifest.getvalue())["chat_id"], 456)
+        self.assertNotIn("Foreign dialog content", manifest.getvalue())
+        self.assertNotIn("Foreign dialog content", text.getvalue())
 
     @unittest.skipUnless(hasattr(time, "tzset"), "Requires process timezone control")
     def test_actual_library_dates_convert_to_utc_in_winter_and_summer(self):

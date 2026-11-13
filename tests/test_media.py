@@ -13,7 +13,7 @@ from tosint import process_download_message
 
 class MediaDownloadTests(unittest.TestCase):
     def process(self, media, directory, app, skip_media=False):
-        message = SimpleNamespace(id=42, date=datetime(2026, 9, 30), media=media, text="Example")
+        message = SimpleNamespace(id=42, chat=SimpleNamespace(id=123), date=datetime(2026, 9, 30), media=media, text="Example")
         result = {"media_downloaded": 0, "media_failed": 0, "messages_exported": 0, "errors": []}
         manifest, text = io.StringIO(), io.StringIO()
         process_download_message(message, app, 123, directory, manifest, text, result, skip_media)

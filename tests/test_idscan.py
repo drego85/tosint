@@ -30,7 +30,7 @@ class IDScanBatchTests(unittest.TestCase):
     def run_download(self, start=123, limit=0, batch=50, missing=(), failure=None, auth="bot", progress=0, history=None):
         app = Mock()
         app.me = SimpleNamespace(id=123, is_bot=auth == "bot")
-        app.get_chat.return_value = SimpleNamespace(title="Example", type="group")
+        app.get_chat.return_value = SimpleNamespace(id=123, title="Example", type="group")
         app.get_chat_history.return_value = iter([])
         if history is not None:
             app.get_chat_history.side_effect = history
@@ -39,7 +39,7 @@ class IDScanBatchTests(unittest.TestCase):
             self.assertEqual(replies, 0)
             if failure:
                 raise failure
-            return [SimpleNamespace(id=i, date=None if i in missing else datetime(2026, 9, 30)) for i in reversed(ids) if i != 9]
+            return [SimpleNamespace(id=i, chat=SimpleNamespace(id=123), date=None if i in missing else datetime(2026, 9, 30)) for i in reversed(ids) if i != 9]
 
         app.get_messages.side_effect = get_messages
         pyrogram = ModuleType("pyrogram")
@@ -104,7 +104,7 @@ class IDScanBatchTests(unittest.TestCase):
     def failing_history(self, ids):
         def history(**kwargs):
             for message_id in ids:
-                yield SimpleNamespace(id=message_id, date=datetime(2026, 11, 10))
+                yield SimpleNamespace(id=message_id, chat=SimpleNamespace(id=123), date=datetime(2026, 11, 10))
             raise RuntimeError("history unavailable")
         return history
 

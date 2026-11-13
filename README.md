@@ -256,8 +256,19 @@ with `--download-batch-size <1-200>`. Missing or deleted IDs are skipped without
 discarding the other messages in the batch. Exports remain ordered from newest
 to oldest; `ids_scanned` counts processed IDs, `unavailable_ids` counts IDs for
 which no dated message was returned, and `exported` counts exported messages.
+Before writing logs or accessing attachments, Tosint verifies that each dated
+message's actual `chat.id` matches the resolved numeric target ID. Messages from
+other chats or without a verifiable chat ID are skipped and counted separately
+as `filtered` in progress output and `messages_filtered` in the JSON report.
+They do not count toward `--download-limit` or attachment failures.
 If the entire request fails, the error is reported rather than silently skipping
 the batch. `--download-limit` still limits the number of messages exported.
+
+Private chats and basic groups share a message ID sequence for the account,
+unlike channels and supergroups. A high starting ID therefore does not measure
+the size of one private conversation: full ID scans may still require many
+requests and FloodWait pauses, even when most returned messages are filtered.
+Earlier exports are not automatically repaired or cleaned by this validation.
 
 Attachment downloads include only photos, videos, documents, audio, voice
 messages and video notes, based on Telegram's media type. Stickers (including

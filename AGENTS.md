@@ -75,6 +75,13 @@ and bot flag in the download report.
 In automatic mode, bot sessions use `idscan` directly. User sessions try history
 and may fall back to ID scan. Match batch responses by message ID, not position;
 missing messages must not discard valid messages from the same batch.
+Resolve username targets to a numeric chat ID before acquisition. Verify each
+dated message's actual `message.chat.id` before exporting text, reusing or
+downloading media, or hashing files. Never infer the dialog from the sender or
+substitute the requested ID when the message's own chat ID is missing. Filter
+other/unknown chats, count them separately, and do not consume the export limit.
+Private chats and basic groups share account-wide message IDs; passing a chat
+to `get_messages` does not by itself scope `messages.GetMessages` responses.
 After a partial history retrieval failure, scan below the oldest exported ID
 and deduplicate within the current run. Export limits count unique messages.
 Do not use history fallback to handle export write failures.

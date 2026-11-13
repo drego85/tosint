@@ -18,8 +18,8 @@ class SessionIdentityTests(unittest.TestCase):
     def download(self, directory, identity, auth="bot", expected=123, token="123:fake"):
         app = Mock()
         app.me = identity
-        app.get_chat.return_value = SimpleNamespace(title="Example", type="group")
-        message = SimpleNamespace(id=1, date=datetime(2026, 11, 10), text="Example")
+        app.get_chat.return_value = SimpleNamespace(id=456, title="Example", type="group")
+        message = SimpleNamespace(id=1, chat=SimpleNamespace(id=456), date=datetime(2026, 11, 10), text="Example")
         app.get_messages.return_value = [message]
         app.get_chat_history.return_value = iter([message])
         pyrogram = ModuleType("pyrogram")

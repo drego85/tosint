@@ -31,7 +31,7 @@ class ExportMetadataTests(unittest.TestCase):
         app.download_media.side_effect = download
         result = {"media_downloaded": 0, "media_failed": 0, "messages_exported": 0, "errors": []}
         manifest, text = io.StringIO(), io.StringIO()
-        tosint.process_download_message(self.message(), app, 999, directory, manifest, text,
+        tosint.process_download_message(self.message(), app, 123, directory, manifest, text,
             result, skip_media=skip, hash_media=hash_media)
         return result, json.loads(manifest.getvalue()), text.getvalue()
 

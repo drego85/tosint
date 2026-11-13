@@ -13,7 +13,7 @@ import tosint
 class MediaReuseTests(unittest.TestCase):
     def message(self, message_id=42, unique_id="unique", size=3, kind="document"):
         return SimpleNamespace(
-            id=message_id, date=datetime(2026, 11, 12), media=kind, text="Example",
+            id=message_id, chat=SimpleNamespace(id=123), date=datetime(2026, 11, 12), media=kind, text="Example",
             **{kind: SimpleNamespace(file_name="report.bin", file_unique_id=unique_id, file_size=size)}
         )
 

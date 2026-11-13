@@ -15,7 +15,7 @@ class ExportSafetyTests(unittest.TestCase):
     today_stem = "2026.11.12_messages_example"
 
     def message(self, message_id=3):
-        return SimpleNamespace(id=message_id, date=datetime(2026, 11, 10), text="New message")
+        return SimpleNamespace(id=message_id, chat=SimpleNamespace(id=123), date=datetime(2026, 11, 10), text="New message")
 
     def previous_export(self, directory):
         for extension in ("jsonl", "txt"):
@@ -40,7 +40,7 @@ class ExportSafetyTests(unittest.TestCase):
                        download_auth_mode="bot", progress_every=0, batch_size=1,
                        expected_bot_id=123, output_stem=self.today_stem)
         options.update(kwargs)
-        app.get_chat.return_value = SimpleNamespace(title="Example", type="group")
+        app.get_chat.return_value = SimpleNamespace(id=123, title="Example", type="group")
         app.me = SimpleNamespace(id=123, is_bot=True)
         with patch.dict("sys.modules", {"pyrogram": pyrogram, "pyrogram.errors": errors}), patch.object(
             tosint, "open_download_client", client
