@@ -17,7 +17,7 @@ class ChatScopeTests(unittest.TestCase):
                                date=datetime(2026, 11, 13) if dated else None,
                                text=f"Message {message_id}")
 
-    def download(self, directory, app, target=123, resolved=123, mode="auto", limit=0, start=6, auth=None):
+    def download(self, directory, app, target=123, resolved=123, mode="auto", limit=0, start=6, auth=None, debug_scope=False):
         auth = auth or ("user" if mode == "history" else "bot")
         app.me = SimpleNamespace(id=123, is_bot=auth == "bot")
         app.get_chat.return_value = SimpleNamespace(id=resolved, title="Example", type="private")
@@ -37,7 +37,8 @@ class ChatScopeTests(unittest.TestCase):
                 target, 1, "fake", str(Path(directory, "sessions", "bot")),
                 str(Path(directory, "export")), limit, start_message_id=start,
                 download_auth_mode=auth,
-                download_mode=mode, bot_token_for_auth="123:fake", progress_every=0
+                download_mode=mode, bot_token_for_auth="123:fake", progress_every=0,
+                debug_scope=debug_scope
             )
         rows = [json.loads(line) for line in Path(result["manifest_path"]).read_text().splitlines()]
         return result, rows
@@ -165,6 +166,85 @@ class ChatScopeTests(unittest.TestCase):
     def test_serializer_does_not_invent_chat_identity_from_the_requested_target(self):
         message = self.message(42, None)
         self.assertIsNone(tosint.message_to_json(message, chat_id=123)["chat_id"])
+
+    def test_scope_diagnostics_are_opt_in(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Mock()
+            app.get_messages.return_value = [self.message(1, 999)]
+            result, rows = self.download(directory, app, start=1)
+        self.assertNotIn("scope_diagnostics", result)
+        self.assertEqual(result["messages_filtered"], 1)
+
+    def test_scope_diagnostics_separate_unavailable_unknown_self_and_other(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Mock()
+            incoming = self.message(3, 123)
+            incoming.from_user = SimpleNamespace(id=456)
+            incoming.outgoing = False
+            app.get_messages.return_value = [
+                self.message(4, dated=False), incoming,
+                self.message(2, None), self.message(1, 999),
+            ]
+            with patch.object(tosint, "text_print") as output:
+                result, rows = self.download(directory, app, target=456, resolved=456, start=4, debug_scope=True)
+        self.assertEqual(rows, [])
+        self.assertEqual(result["unavailable_message_ids"], 1)
+        self.assertEqual(result["messages_filtered"], 3)
+        self.assertEqual(result["scope_diagnostics"]["counts"], {
+            "unknown_chat": 1, "authenticated_peer": 1, "different_chat": 1,
+        })
+        sample = result["scope_diagnostics"]["samples"][0]
+        self.assertEqual(sample["parsed_chat_id"], 123)
+        self.assertEqual(sample["from_user_id"], 456)
+        self.assertEqual(sample["requested_chat_id"], 456)
+        self.assertIs(sample["outgoing"], False)
+        self.assertEqual(output.call_count, 3)
+
+    def test_scope_diagnostics_are_bounded_and_never_include_content(self):
+        message = self.message(1, 999)
+        message.text = "PRIVATE CONTENT"
+        message.caption = "PRIVATE CAPTION"
+        message.from_user = SimpleNamespace(id=888, username="PRIVATE NAME")
+        result = {"authenticated_user_id": 123, "scope_diagnostics": {
+            "counts": {"unknown_chat": 0, "authenticated_peer": 0, "different_chat": 0},
+            "samples": [],
+        }}
+        with patch.object(tosint, "TEXT_OUTPUT_ENABLED", False), patch("sys.stdout", new_callable=io.StringIO) as output:
+            for _ in range(25):
+                tosint.record_filtered_message_scope(message, 456, result)
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(len(result["scope_diagnostics"]["samples"]), 10)
+        self.assertEqual(result["scope_diagnostics"]["counts"]["different_chat"], 25)
+        self.assertNotIn("PRIVATE", json.dumps(result))
+
+    def test_scope_diagnostics_do_not_stringify_untrusted_fields(self):
+        message = self.message("UNTRUSTED", "UNTRUSTED")
+        message.from_user = SimpleNamespace(id="UNTRUSTED")
+        message.sender_chat = SimpleNamespace(id=True)
+        message.outgoing = "UNTRUSTED"
+        result = {"scope_diagnostics": {
+            "counts": {"unknown_chat": 0, "authenticated_peer": 0, "different_chat": 0},
+            "samples": [],
+        }}
+        with patch.object(tosint, "text_print"):
+            tosint.record_filtered_message_scope(message, 456, result)
+        self.assertNotIn("UNTRUSTED", json.dumps(result))
+        self.assertIsNone(result["scope_diagnostics"]["samples"][0]["outgoing"])
+
+    def test_scope_diagnostics_survive_interruption(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Mock()
+
+            def history(**kwargs):
+                yield self.message(4, 999)
+                raise KeyboardInterrupt
+
+            app.get_chat_history.side_effect = history
+            with patch.object(tosint, "text_print"):
+                result, rows = self.download(directory, app, mode="history", debug_scope=True)
+        self.assertTrue(result["interrupted"])
+        self.assertEqual(rows, [])
+        self.assertEqual(result["scope_diagnostics"]["counts"]["different_chat"], 1)
 
 
 if __name__ == "__main__":

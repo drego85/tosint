@@ -776,11 +776,45 @@ def message_matches_chat(message, chat_id):
     return type(actual_id) is int and type(target_id) is int and actual_id == target_id
 
 
+def record_filtered_message_scope(message, chat_id, result):
+    diagnostics = result.get("scope_diagnostics")
+    if diagnostics is None:
+        return
+
+    def integer_or_none(value):
+        return value if type(value) is int else None
+
+    actual_id = integer_or_none(getattr(getattr(message, "chat", None), "id", None))
+    if actual_id is None:
+        reason = "unknown_chat"
+    elif actual_id == result.get("authenticated_user_id"):
+        reason = "authenticated_peer"
+    else:
+        reason = "different_chat"
+    diagnostics["counts"][reason] += 1
+    if len(diagnostics["samples"]) >= 10:
+        return
+    outgoing = getattr(message, "outgoing", None)
+    sample = {
+        "reason": reason,
+        "message_id": integer_or_none(getattr(message, "id", None)),
+        "requested_chat_id": integer_or_none(normalize_chat_reference(chat_id)),
+        "parsed_chat_id": actual_id,
+        "from_user_id": integer_or_none(getattr(getattr(message, "from_user", None), "id", None)),
+        "sender_chat_id": integer_or_none(getattr(getattr(message, "sender_chat", None), "id", None)),
+        "outgoing": outgoing if type(outgoing) is bool else None,
+        "authenticated_user_id": integer_or_none(result.get("authenticated_user_id")),
+    }
+    diagnostics["samples"].append(sample)
+    text_print("[DOWNLOAD] Scope sample: " + json.dumps(sample))
+
+
 def process_download_message(message, app, chat_id, download_dir, manifest_file, text_file, result, skip_media=False, hash_media=False, media_index=None):
     if not getattr(message, "date", None):
         return False
     if not message_matches_chat(message, chat_id):
         result["messages_filtered"] = result.get("messages_filtered", 0) + 1
+        record_filtered_message_scope(message, chat_id, result)
         return False
 
     downloaded_file = None
@@ -892,7 +926,8 @@ def download_chat_content(
     output_stem=None,
     batch_size=50,
     hash_media=False,
-    expected_bot_id=None
+    expected_bot_id=None,
+    debug_scope=False
 ):
     if not 1 <= batch_size <= 200:
         raise ValueError("Download batch size must be between 1 and 200.")
@@ -953,6 +988,11 @@ def download_chat_content(
     }
 
     chat_peer = normalize_chat_reference(chat_id)
+    if debug_scope:
+        result["scope_diagnostics"] = {
+            "counts": {"unknown_chat": 0, "authenticated_peer": 0, "different_chat": 0},
+            "samples": [],
+        }
 
     client_kwargs = {
         "api_id": int(api_id),
@@ -1150,6 +1190,7 @@ def main():
     parser.add_argument('--download-start-id', type=int, help='Start message_id for idscan mode (latest known message id)')
     parser.add_argument('--download-progress-every', type=int, default=50, help='Print download progress every N scanned messages (0 disables)')
     parser.add_argument('--download-batch-size', type=int, default=50, help='Message IDs per idscan request, from 1 to 200 (default: 50)')
+    parser.add_argument('--download-debug-scope', action='store_true', help='Diagnose filtered messages using counts and up to 10 ID-only samples; no message content')
     parser.add_argument('--skip-media-download', action='store_true', help='Do not download media attachments; export only message metadata/text')
     parser.add_argument('--hash-media', action='store_true', help='Compute SHA-256 of downloaded attachments and include hashes in JSONL (disabled by default)')
     parser.add_argument('--env-file', type=str, default='.env', help='Env file path for API_ID/API_HASH (default: .env)')
@@ -1303,7 +1344,8 @@ def run_analysis(args, report):
                     output_stem=output_stem,
                     batch_size=args.download_batch_size,
                     hash_media=args.hash_media,
-                    expected_bot_id=telegram_get_me["id"]
+                    expected_bot_id=telegram_get_me["id"],
+                    debug_scope=args.download_debug_scope
                 )
                 report["downloads"] = download_result
                 if download_result.get("interrupted"):
@@ -1323,6 +1365,8 @@ def run_analysis(args, report):
                     text_print(f"Unavailable Message IDs: {download_result['unavailable_message_ids']}")
                 text_print(f"Messages Exported: {download_result['messages_exported']}")
                 text_print(f"Messages Filtered (Other/Unknown Chat): {download_result.get('messages_filtered', 0)}")
+                if "scope_diagnostics" in download_result:
+                    text_print("Scope Diagnostic Counts: " + json.dumps(download_result["scope_diagnostics"]["counts"]))
                 text_print(f"Media Downloaded: {download_result['media_downloaded']}")
                 text_print(f"Media Reused: {download_result.get('media_reused', 0)}")
                 text_print(f"Media Failed: {download_result['media_failed']}")

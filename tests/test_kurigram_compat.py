@@ -57,6 +57,36 @@ class KurigramCompatibilityTests(unittest.TestCase):
         self.assertEqual([message.id for message in app.get_chat_history(456, limit=1)], [42])
         app.invoke.assert_awaited_once()
 
+    def test_synthetic_incoming_private_peer_is_preserved_by_parser_and_diagnosed(self):
+        # This tests a possible raw response shape, not a captured Telegram response.
+        app = self.client()
+        raw_message = app.invoke.return_value.messages[0]
+        raw_message.peer_id = raw.types.PeerUser(user_id=123)
+        raw_message.from_id = raw.types.PeerUser(user_id=456)
+        raw_message.out = False
+        message = app.get_messages(456, [42], replies=0)[0]
+        self.assertEqual(message.chat.id, 123)
+        self.assertEqual(message.from_user.id, 456)
+        self.assertFalse(message.outgoing)
+        result = {"authenticated_user_id": 123, "scope_diagnostics": {
+            "counts": {"unknown_chat": 0, "authenticated_peer": 0, "different_chat": 0},
+            "samples": [],
+        }}
+        with patch.object(tosint, "text_print"):
+            tosint.record_filtered_message_scope(message, 456, result)
+        self.assertEqual(result["scope_diagnostics"]["counts"]["authenticated_peer"], 1)
+        self.assertFalse(tosint.message_matches_chat(message, 456))
+
+    def test_incoming_message_with_dialog_peer_matches_the_target(self):
+        app = self.client()
+        raw_message = app.invoke.return_value.messages[0]
+        raw_message.from_id = raw.types.PeerUser(user_id=456)
+        raw_message.out = False
+        message = app.get_messages(456, [42], replies=0)[0]
+        self.assertFalse(message.outgoing)
+        self.assertEqual(message.from_user.id, 456)
+        self.assertTrue(tosint.message_matches_chat(message, 456))
+
     def test_real_private_batch_can_include_another_dialog_but_export_filters_it(self):
         app = self.client()
         app.invoke.return_value.messages.append(raw.types.Message(

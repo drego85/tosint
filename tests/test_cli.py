@@ -11,6 +11,13 @@ import tosint
 
 
 class CLIValidationTests(unittest.TestCase):
+    def test_scope_diagnostics_flag_is_passed_to_analysis(self):
+        with patch.object(sys, "argv", ["tosint.py", "-t", "fake", "--download-debug-scope"]), patch.object(
+            tosint, "run_analysis"
+        ) as analysis:
+            self.assertEqual(tosint.main(), 0)
+        self.assertTrue(analysis.call_args.args[0].download_debug_scope)
+
     def test_invalid_download_ranges_are_rejected_before_analysis(self):
         for option, value in (
             ("--download-start-id", "0"),

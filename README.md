@@ -270,6 +270,17 @@ the size of one private conversation: full ID scans may still require many
 requests and FloodWait pauses, even when most returned messages are filtered.
 Earlier exports are not automatically repaired or cleaned by this validation.
 
+To investigate unexpected filtering, add `--download-debug-scope`. It displays
+up to 10 filtered-message samples containing only numeric IDs and message
+direction, plus counts for missing chat IDs (`unknown_chat`), chat IDs matching
+the authenticated account (`authenticated_peer`), and other IDs (`different_chat`).
+The same diagnostics are included in the download section of the analysis JSON
+report (`--json` or `--json-file`), not in the message logs. No message text,
+usernames or attachment details are included; IDs may still be sensitive.
+These categories describe Kurigram's parsed values, not proven conversation
+membership or a confirmed library bug. Filtering remains unchanged. Unavailable
+IDs may include deleted messages, but unavailability alone does not prove deletion.
+
 Attachment downloads include only photos, videos, documents, audio, voice
 messages and video notes, based on Telegram's media type. Stickers (including
 animated and video stickers), GIFs/animations, link previews, dice and other
@@ -363,6 +374,7 @@ python3 tosint.py -t <TELEGRAM_BOT_TOKEN> -c <TELEGRAM_CHAT_ID> --downloads --do
 - `--download-start-id`: positive start `message_id` for `idscan` mode (`0` and negative values are rejected)
 - `--download-progress-every`: print progress every N scanned IDs or history messages (`0` disables, default: `50`)
 - `--download-batch-size`: IDs per request in `idscan` mode (`1` to `200`, default: `50`; ignored in `history` mode)
+- `--download-debug-scope`: show filtered-message diagnostic counts and up to 10 ID-only samples (disabled by default)
 - `--skip-media-download`: skip attachment files and export only message metadata/text
 - `--hash-media`: optionally compute SHA-256 for downloaded attachments and record it in JSONL (disabled by default)
 - `--env-file`: `.env` path for loading values (default: `.env`)
