@@ -776,6 +776,38 @@ def message_matches_chat(message, chat_id):
     return type(actual_id) is int and type(target_id) is int and actual_id == target_id
 
 
+def record_recipient(message, bot_id, recipients, seen):
+    chat = getattr(message, "chat", None)
+    chat_id = getattr(chat, "id", None)
+    chat_type = getattr(chat, "type", None)
+    chat_type = getattr(chat_type, "value", chat_type)
+    sender_id = getattr(getattr(message, "from_user", None), "id", None)
+    message_id = getattr(message, "id", None)
+    date = getattr(message, "date", None)
+    if (type(chat_id) is not int or chat_id <= 0 or chat_id == bot_id
+            or chat_type not in ("private", "bot")
+            or type(sender_id) is not int or sender_id != bot_id
+            or getattr(message, "outgoing", None) is not True
+            or type(message_id) is not int or message_id <= 0
+            or not isinstance(date, datetime)):
+        return
+    key = (chat_id, message_id)
+    if key in seen:
+        return
+    seen.add(key)
+    utc_date = date.astimezone(timezone.utc)
+    formatted_date = format_utc_datetime(utc_date)
+    row = recipients.setdefault(chat_id, {
+        "chat_id": chat_id, "messages_observed": 0,
+        "first_message_date": formatted_date, "last_message_date": formatted_date,
+    })
+    row["messages_observed"] += 1
+    if utc_date < datetime.fromisoformat(row["first_message_date"].replace("Z", "+00:00")):
+        row["first_message_date"] = formatted_date
+    if utc_date > datetime.fromisoformat(row["last_message_date"].replace("Z", "+00:00")):
+        row["last_message_date"] = formatted_date
+
+
 def record_filtered_message_scope(message, chat_id, result):
     diagnostics = result.get("scope_diagnostics")
     if diagnostics is None:
@@ -927,7 +959,8 @@ def download_chat_content(
     batch_size=50,
     hash_media=False,
     expected_bot_id=None,
-    debug_scope=False
+    debug_scope=False,
+    map_recipients=False
 ):
     if not 1 <= batch_size <= 200:
         raise ValueError("Download batch size must be between 1 and 200.")
@@ -938,6 +971,8 @@ def download_chat_content(
     acquisition_date = datetime.now().date()
     if download_auth_mode not in ("bot", "user"):
         raise ValueError("Download authentication mode must be bot or user.")
+    if map_recipients and download_auth_mode != "bot":
+        raise ValueError("Recipient mapping requires bot authentication.")
     if download_auth_mode == "bot":
         if not bot_token_for_auth:
             raise RuntimeError("download auth mode 'bot' requires a valid bot token.")
@@ -988,6 +1023,14 @@ def download_chat_content(
     }
 
     chat_peer = normalize_chat_reference(chat_id)
+    recipients = {}
+    recipient_message_ids = set()
+    if map_recipients:
+        result["recipient_map"] = {
+            "bot_id": expected_bot_id,
+            "coverage": "observed_outgoing_private_messages",
+            "recipients": [],
+        }
     if debug_scope:
         result["scope_diagnostics"] = {
             "counts": {"unknown_chat": 0, "authenticated_peer": 0, "different_chat": 0},
@@ -1031,12 +1074,13 @@ def download_chat_content(
                     f", unavailable_ids={result['unavailable_message_ids']}"
                     if result["download_mode_used"] == "idscan" else ""
                 )
+                recipients_part = f", recipients={len(recipients)}" if map_recipients else ""
                 text_print(
                     f"[DOWNLOAD] Progress: {scan_label}={result['messages_scanned']}{unavailable_part}, "
                     f"exported={result['messages_exported']}, filtered={result['messages_filtered']}, "
                     f"media={result['media_downloaded']}, "
                     f"media_reused={result['media_reused']}, "
-                    f"media_failed={result['media_failed']}{current_id_part}"
+                    f"media_failed={result['media_failed']}{recipients_part}{current_id_part}"
                 )
                 last_progress_scanned = scanned
 
@@ -1070,6 +1114,8 @@ def download_chat_content(
                 exported_ids = set()
 
                 def export_message(message):
+                    if map_recipients:
+                        record_recipient(message, identity.id, recipients, recipient_message_ids)
                     message_id = getattr(message, "id", None)
                     if message_id in exported_ids and message_matches_chat(message, chat_peer):
                         return
@@ -1164,6 +1210,8 @@ def download_chat_content(
         result["interrupted"] = True
         result["errors"].append("download interrupted by user")
 
+    if map_recipients:
+        result["recipient_map"]["recipients"] = [recipients[key] for key in sorted(recipients)]
     return result
 
 
@@ -1191,6 +1239,7 @@ def main():
     parser.add_argument('--download-progress-every', type=int, default=50, help='Print download progress every N scanned messages (0 disables)')
     parser.add_argument('--download-batch-size', type=int, default=50, help='Message IDs per idscan request, from 1 to 200 (default: 50)')
     parser.add_argument('--download-debug-scope', action='store_true', help='Diagnose filtered messages using counts and up to 10 ID-only samples; no message content')
+    parser.add_argument('--map-recipients', action='store_true', help='Map observed private recipients of the authenticated bot during --download; save with --json-file')
     parser.add_argument('--skip-media-download', action='store_true', help='Do not download media attachments; export only message metadata/text')
     parser.add_argument('--hash-media', action='store_true', help='Compute SHA-256 of downloaded attachments and include hashes in JSONL (disabled by default)')
     parser.add_argument('--env-file', type=str, default='.env', help='Env file path for API_ID/API_HASH (default: .env)')
@@ -1206,6 +1255,8 @@ def main():
         parser.error('--download-limit must be zero or greater')
     if not args.token.strip():
         parser.error('-t/--token must not be empty')
+    if args.map_recipients and (not args.downloads or args.download_auth != "bot"):
+        parser.error('--map-recipients requires --download and --download-auth bot')
     if (args.downloads or args.create_invite_link) and not (args.chat_id and args.chat_id.strip()):
         parser.error('--downloads and --create-invite-link require -c/--chat_id')
 
@@ -1345,7 +1396,8 @@ def run_analysis(args, report):
                     batch_size=args.download_batch_size,
                     hash_media=args.hash_media,
                     expected_bot_id=telegram_get_me["id"],
-                    debug_scope=args.download_debug_scope
+                    debug_scope=args.download_debug_scope,
+                    map_recipients=args.map_recipients
                 )
                 report["downloads"] = download_result
                 if download_result.get("interrupted"):
@@ -1367,6 +1419,11 @@ def run_analysis(args, report):
                 text_print(f"Messages Filtered (Other/Unknown Chat): {download_result.get('messages_filtered', 0)}")
                 if "scope_diagnostics" in download_result:
                     text_print("Scope Diagnostic Counts: " + json.dumps(download_result["scope_diagnostics"]["counts"]))
+                if "recipient_map" in download_result:
+                    mapped = download_result["recipient_map"]["recipients"]
+                    text_print(f"Private Recipients Observed (Partial Map): {len(mapped)}")
+                    for recipient in mapped:
+                        text_print("Recipient: " + json.dumps(recipient))
                 text_print(f"Media Downloaded: {download_result['media_downloaded']}")
                 text_print(f"Media Reused: {download_result.get('media_reused', 0)}")
                 text_print(f"Media Failed: {download_result['media_failed']}")

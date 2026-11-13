@@ -111,6 +111,17 @@ class KurigramCompatibilityTests(unittest.TestCase):
         self.assertNotIn("Foreign dialog content", manifest.getvalue())
         self.assertNotIn("Foreign dialog content", text.getvalue())
 
+    def test_real_parser_outgoing_private_messages_can_be_mapped_without_content(self):
+        app = self.client()
+        app.invoke.return_value.messages[0].out = True
+        messages = app.get_messages(456, [42, 41], replies=0)
+        recipients, seen = {}, set()
+        for message in messages:
+            tosint.record_recipient(message, app.me.id, recipients, seen)
+        self.assertEqual(list(recipients), [456])
+        self.assertEqual(recipients[456]["messages_observed"], 1)
+        self.assertNotIn("Example", json.dumps(recipients))
+
     @unittest.skipUnless(hasattr(time, "tzset"), "Requires process timezone control")
     def test_actual_library_dates_convert_to_utc_in_winter_and_summer(self):
         try:

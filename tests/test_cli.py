@@ -11,6 +11,24 @@ import tosint
 
 
 class CLIValidationTests(unittest.TestCase):
+    def test_recipient_mapping_requires_download_and_bot_auth_before_analysis(self):
+        for options in (["--map-recipients"], ["--download", "-c", "456", "--map-recipients", "--download-auth", "user"]):
+            with self.subTest(options=options), patch.object(sys, "argv", ["tosint.py", "-t", "fake", *options]), patch.object(
+                tosint, "run_analysis"
+            ) as analysis, contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as caught:
+                    tosint.main()
+                self.assertEqual(caught.exception.code, 2)
+                analysis.assert_not_called()
+
+    def test_recipient_mapping_accepts_both_download_aliases(self):
+        for option in ("--download", "--downloads"):
+            with self.subTest(option=option), patch.object(sys, "argv", [
+                "tosint.py", "-t", "fake", "-c", "456", option, "--map-recipients"
+            ]), patch.object(tosint, "run_analysis") as analysis:
+                self.assertEqual(tosint.main(), 0)
+                self.assertTrue(analysis.call_args.args[0].map_recipients)
+
     def test_scope_diagnostics_flag_is_passed_to_analysis(self):
         with patch.object(sys, "argv", ["tosint.py", "-t", "fake", "--download-debug-scope"]), patch.object(
             tosint, "run_analysis"

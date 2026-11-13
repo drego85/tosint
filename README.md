@@ -281,6 +281,30 @@ These categories describe Kurigram's parsed values, not proven conversation
 membership or a confirmed library bug. Filtering remains unchanged. Unavailable
 IDs may include deleted messages, but unavailability alone does not prove deletion.
 
+### Map Private Recipients
+
+With bot authentication, `--map-recipients` records private destination chat IDs
+observed during `--download`, including the requested chat and other conversations
+encountered by ID scan. It counts only outgoing messages whose sender matches the
+verified bot identity, with a known private destination different from the bot.
+Each recipient has a unique observed-message count and earliest/latest message
+dates in UTC. No names, message text or attachment details are stored in the map.
+
+```bash
+python3 tosint.py -t <BOT_TOKEN> -c <CHAT_ID> --download --map-recipients --json-file report.json
+```
+
+The map appears in the final console summary and in `downloads.recipient_map` in
+the analysis JSON report. Use `--json-file` to keep it; no separate mapping file
+is created automatically. TXT/JSONL message logs still contain only the requested
+chat, and other conversations' attachments are not downloaded. Mapping makes no
+additional API requests and does not change the export limit or scan range.
+In history mode only that history is observed; ID scan can encounter other chats.
+The result is always a partial observation, not a complete recipient directory:
+deleted/unavailable messages, scan limits and interruption affect coverage.
+It attributes messages to the bot, not to a human operator or a particular
+historical token. Interrupted runs retain the map collected so far.
+
 Attachment downloads include only photos, videos, documents, audio, voice
 messages and video notes, based on Telegram's media type. Stickers (including
 animated and video stickers), GIFs/animations, link previews, dice and other
@@ -375,6 +399,7 @@ python3 tosint.py -t <TELEGRAM_BOT_TOKEN> -c <TELEGRAM_CHAT_ID> --downloads --do
 - `--download-progress-every`: print progress every N scanned IDs or history messages (`0` disables, default: `50`)
 - `--download-batch-size`: IDs per request in `idscan` mode (`1` to `200`, default: `50`; ignored in `history` mode)
 - `--download-debug-scope`: show filtered-message diagnostic counts and up to 10 ID-only samples (disabled by default)
+- `--map-recipients`: map observed private recipient IDs during downloads (bot authentication only; save with `--json-file`)
 - `--skip-media-download`: skip attachment files and export only message metadata/text
 - `--hash-media`: optionally compute SHA-256 for downloaded attachments and record it in JSONL (disabled by default)
 - `--env-file`: `.env` path for loading values (default: `.env`)

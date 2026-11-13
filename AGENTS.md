@@ -82,6 +82,11 @@ substitute the requested ID when the message's own chat ID is missing. Filter
 other/unknown chats, count them separately, and do not consume the export limit.
 Private chats and basic groups share account-wide message IDs; passing a chat
 to `get_messages` does not by itself scope `messages.GetMessages` responses.
+Only explicit `--map-recipients` may aggregate other private destination IDs.
+It requires bot authentication, records only observed outgoing messages from the
+verified bot, and stores counts and UTC date ranges in the analysis report.
+Never include other conversations' content or attachments in the requested
+chat's logs, or make extra lookups to enrich this partial recipient map.
 After a partial history retrieval failure, scan below the oldest exported ID
 and deduplicate within the current run. Export limits count unique messages.
 Do not use history fallback to handle export write failures.

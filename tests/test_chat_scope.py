@@ -17,7 +17,7 @@ class ChatScopeTests(unittest.TestCase):
                                date=datetime(2026, 11, 13) if dated else None,
                                text=f"Message {message_id}")
 
-    def download(self, directory, app, target=123, resolved=123, mode="auto", limit=0, start=6, auth=None, debug_scope=False):
+    def download(self, directory, app, target=123, resolved=123, mode="auto", limit=0, start=6, auth=None, debug_scope=False, map_recipients=False):
         auth = auth or ("user" if mode == "history" else "bot")
         app.me = SimpleNamespace(id=123, is_bot=auth == "bot")
         app.get_chat.return_value = SimpleNamespace(id=resolved, title="Example", type="private")
@@ -38,7 +38,7 @@ class ChatScopeTests(unittest.TestCase):
                 str(Path(directory, "export")), limit, start_message_id=start,
                 download_auth_mode=auth,
                 download_mode=mode, bot_token_for_auth="123:fake", progress_every=0,
-                debug_scope=debug_scope
+                debug_scope=debug_scope, map_recipients=map_recipients
             )
         rows = [json.loads(line) for line in Path(result["manifest_path"]).read_text().splitlines()]
         return result, rows
