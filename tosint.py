@@ -14,6 +14,7 @@ from pathlib import Path
 TEXT_OUTPUT_ENABLED = True
 HTTP_TIMEOUT = (10, 30)
 KURIGRAM_SESSION_VERSION = 7
+MEDIA_FILENAME_MAX_BYTES = 255
 DOWNLOADABLE_MEDIA_TYPES = frozenset({
     "photo", "video", "document", "audio", "voice", "video_note",
 })
@@ -692,6 +693,28 @@ def infer_media_filename(message):
     return f"media{inferred_ext}"
 
 
+def truncate_filename_part(value, byte_limit):
+    characters = []
+    used = 0
+    for character in value:
+        size = len(os.fsencode(character))
+        if used + size > byte_limit:
+            break
+        characters.append(character)
+        used += size
+    return "".join(characters)
+
+
+def media_filename_limit(media_dir):
+    try:
+        limit = os.pathconf(media_dir, "PC_NAME_MAX")
+        if limit > 0:
+            return min(limit, MEDIA_FILENAME_MAX_BYTES)
+    except (AttributeError, OSError, ValueError):
+        pass
+    return MEDIA_FILENAME_MAX_BYTES
+
+
 def build_unique_media_target(message, media_dir):
     original_name = infer_media_filename(message)
     base_name = sanitize_path_segment(original_name)
@@ -699,13 +722,21 @@ def build_unique_media_target(message, media_dir):
     if not ext:
         ext = infer_media_extension(message) or ""
     message_id = getattr(message, "id", "unknown")
-    unique_stem = f"{message_id}_{stem}"
-    candidate = os.path.join(media_dir, f"{unique_stem}{ext}")
-    suffix = 1
-    while os.path.exists(candidate) or os.path.exists(f"{candidate}.temp"):
-        candidate = os.path.join(media_dir, f"{unique_stem}_{suffix}{ext}")
+    prefix = f"{message_id}_"
+    limit = media_filename_limit(media_dir)
+    suffix = 0
+    while True:
+        collision_suffix = f"_{suffix}" if suffix else ""
+        # Kurigram writes <filename>.temp before moving it to the final path.
+        available = limit - len(os.fsencode(prefix + collision_suffix + ".temp"))
+        if available < 1:
+            raise ValueError("Filesystem filename limit is too small for the media message ID.")
+        local_ext = truncate_filename_part(ext, available - 1)
+        local_stem = truncate_filename_part(stem or "media", available - len(os.fsencode(local_ext))) or "m"
+        candidate = os.path.join(media_dir, f"{prefix}{local_stem}{collision_suffix}{local_ext}")
+        if not os.path.exists(candidate) and not os.path.exists(f"{candidate}.temp"):
+            return candidate
         suffix += 1
-    return candidate
 
 
 def normalize_downloaded_media_path(downloaded_file, message):

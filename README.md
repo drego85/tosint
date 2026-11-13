@@ -347,6 +347,11 @@ and size, and verifies that the referenced file still exists in that chat's
 paths appear in the new TXT and JSONL. Missing, changed or insufficiently
 documented files are downloaded again without overwriting existing attachments.
 Same-named new files receive numeric suffixes.
+Long local attachment names are truncated to fit the filesystem filename limit
+(at most 255 bytes), including room for the message ID, extension, collision
+suffix and Kurigram's temporary `.temp` suffix. Truncation does not split Unicode
+characters. Normal extensions are preserved; an extension that cannot itself
+fit is shortened too. JSONL keeps the full original Telegram filename.
 
 The progress and JSON report include `media_reused`; the final text summary shows
 `Media Reused` separately from new downloads and failures. Reuse does not require

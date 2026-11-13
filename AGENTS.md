@@ -127,6 +127,9 @@ Keep each chat under `downloads/<bot_username>/<chat_id>/`, with sanitized
 `YYYY.MM.DD_messages_<chat_title>.jsonl` and `.txt` filenames. Without a usable title,
 fall back to the chat ID. Keep attachment files in that chat's `media/` directory.
 Use message-ID-prefixed sanitized filenames to distinguish same-named attachments.
+Bound local media names by the filesystem component limit, capped at 255 bytes,
+including room for `.temp` and numeric collision suffixes. Truncate at character
+boundaries, keep ordinary extensions, and retain original filenames in JSONL.
 Keep displayed and exported paths relative to the working directory.
 Use the local acquisition start date. Write directly to the dated logs without
 creating `.acquisition-*` directories. Preserve other days and legacy undated
