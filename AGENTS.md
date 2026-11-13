@@ -51,6 +51,9 @@ Keep `--json` stdout machine-readable. Include report-save errors in the final
 stdout report. Preserve exit codes: 0 for no top-level errors, 1 for reported
 failures, 2 for invalid arguments, and 130 for interruption. Individual media
 failures are recorded separately and do not currently force a nonzero exit.
+Preserve partial download paths, counters and recipient maps on fatal acquisition
+or cleanup errors. Mark the download failed, retain the original error and exit
+with failure; do not turn an exception into a completed acquisition or retry it.
 
 ## Telegram Access and Sessions
 

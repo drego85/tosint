@@ -406,6 +406,12 @@ previous days remain unchanged. Attachment references are read before truncating
 today's logs, allowing media reuse even on the same day. Existing media and older
 `.acquisition-*` directories are not deleted or migrated automatically.
 
+If acquisition fails after starting, the analysis JSON report keeps the available
+paths, per-chat counters and recipient map collected so far, with `failed: true`.
+The CLI reports failure with exit code `1`; files already written remain partial.
+Interruption still uses `interrupted: true` and exit code `130`. No automatic
+retry or resume is performed.
+
 Example:
 
 ```bash

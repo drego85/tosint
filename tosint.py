@@ -973,7 +973,8 @@ def download_chat_content(
     debug_scope=False,
     map_recipients=False,
     download_scope=None,
-    overwrite_policy="ask"
+    overwrite_policy="ask",
+    download_report=None
 ):
     if not 1 <= batch_size <= 200:
         raise ValueError("Download batch size must be between 1 and 200.")
@@ -1038,6 +1039,7 @@ def download_chat_content(
         "media_reused": 0,
         "media_failed": 0,
         "interrupted": False,
+        "failed": False,
         "session_recovered": False,
         "revoked_session_archive": None,
         "authenticated_user_id": None,
@@ -1046,6 +1048,9 @@ def download_chat_content(
         "text_path": None,
         "errors": [],
     }
+    if download_report is not None:
+        download_report.update(result)
+        result = download_report
 
     chat_peer = normalize_chat_reference(chat_id)
     recipients = {}
@@ -1152,13 +1157,15 @@ def download_chat_content(
 
                 def write_message(message, destination, directory, manifest, text, index, entry):
                     before = {key: result[key] for key in counter_keys}
-                    if process_download_message(
-                        message, app, destination, directory, manifest, text, result,
-                        skip_media=skip_media, hash_media=hash_media, media_index=index
-                    ):
-                        exported_ids.add((destination, message.id))
-                    for key in counter_keys:
-                        entry[key] += result[key] - before[key]
+                    try:
+                        if process_download_message(
+                            message, app, destination, directory, manifest, text, result,
+                            skip_media=skip_media, hash_media=hash_media, media_index=index
+                        ):
+                            exported_ids.add((destination, message.id))
+                    finally:
+                        for key in counter_keys:
+                            entry[key] += result[key] - before[key]
 
                 def export_other_chat(message, destination):
                     if destination not in other_exports:
@@ -1289,10 +1296,54 @@ def download_chat_content(
     except KeyboardInterrupt:
         result["interrupted"] = True
         result["errors"].append("download interrupted by user")
-
-    if map_recipients:
-        result["recipient_map"]["recipients"] = [recipients[key] for key in sorted(recipients)]
+    except Exception as error:
+        result["failed"] = True
+        result["errors"].append(f"download failed: {error}")
+        raise
+    finally:
+        if map_recipients:
+            result["recipient_map"]["recipients"] = [recipients[key] for key in sorted(recipients)]
     return result
+
+
+def print_download_summary(download_result, default_scope=None):
+    if download_result.get("interrupted"):
+        text_print("\n[DOWNLOAD] Interrupted by user")
+    elif download_result.get("failed"):
+        text_print("\n[DOWNLOAD] Failed; partial results preserved")
+    else:
+        text_print("\n[DOWNLOAD] Completed")
+    text_print(f"Requested Mode: {download_result['download_mode_requested']}")
+    text_print(f"Used Mode: {download_result['download_mode_used']}")
+    text_print(f"Download Scope: {download_result.get('download_scope', default_scope)}")
+    if download_result.get("start_message_id"):
+        text_print(f"Start Message ID: {download_result['start_message_id']}")
+    text_print(f"Download Directory: {download_result.get('download_root', display_path(download_result['download_dir']))}")
+    if download_result.get("manifest_path"):
+        text_print(f"Manifest: {display_path(download_result['manifest_path'])}")
+    if download_result.get("text_path"):
+        text_print(f"Text Log: {display_path(download_result['text_path'])}")
+    scan_label = "Message IDs Scanned" if download_result['download_mode_used'] == "idscan" else "Messages Scanned"
+    text_print(f"{scan_label}: {download_result['messages_scanned']}")
+    if download_result['download_mode_used'] == "idscan":
+        text_print(f"Unavailable Message IDs: {download_result['unavailable_message_ids']}")
+    text_print(f"Messages Exported: {download_result['messages_exported']}")
+    text_print(f"Messages Filtered (Other/Unknown Chat): {download_result.get('messages_filtered', 0)}")
+    if download_result.get("messages_skipped_overwrite"):
+        text_print(f"Messages Skipped (Overwrite Policy): {download_result['messages_skipped_overwrite']}")
+    if len(download_result.get("chat_exports", [])) > 1:
+        for entry in download_result["chat_exports"]:
+            text_print(f"Chat {entry['chat_id']}: exported={entry['messages_exported']}, directory={entry['download_dir']}")
+    if "scope_diagnostics" in download_result:
+        text_print("Scope Diagnostic Counts: " + json.dumps(download_result["scope_diagnostics"]["counts"]))
+    if "recipient_map" in download_result:
+        mapped = download_result["recipient_map"]["recipients"]
+        text_print(f"Private Recipients Observed (Partial Map): {len(mapped)}")
+        for recipient in mapped:
+            text_print("Recipient: " + json.dumps(recipient))
+    text_print(f"Media Downloaded: {download_result['media_downloaded']}")
+    text_print(f"Media Reused: {download_result.get('media_reused', 0)}")
+    text_print(f"Media Failed: {download_result['media_failed']}")
 
 
 def main():
@@ -1462,6 +1513,8 @@ def run_analysis(args, report):
             report["errors"].append("TELEGRAM_API_ID and TELEGRAM_API_HASH are required for --downloads.")
             text_print("ATTENTION TELEGRAM_API_ID and TELEGRAM_API_HASH are required for --downloads.")
         else:
+            download_result = {}
+            report["downloads"] = download_result
             try:
                 download_result = download_chat_content(
                     chat_id=telegram_chat_id,
@@ -1484,47 +1537,17 @@ def run_analysis(args, report):
                     debug_scope=args.download_debug_scope,
                     map_recipients=args.map_recipients,
                     download_scope=args.download_scope,
-                    overwrite_policy=args.download_overwrite
+                    overwrite_policy=args.download_overwrite,
+                    download_report=download_result
                 )
                 report["downloads"] = download_result
                 if download_result.get("skipped_chats"):
                     report["errors"].append("Some chat exports were skipped because today's files were not approved for overwrite.")
-                if download_result.get("interrupted"):
-                    text_print("\n[DOWNLOAD] Interrupted by user")
-                else:
-                    text_print("\n[DOWNLOAD] Completed")
-                text_print(f"Requested Mode: {download_result['download_mode_requested']}")
-                text_print(f"Used Mode: {download_result['download_mode_used']}")
-                text_print(f"Download Scope: {download_result.get('download_scope', args.download_scope)}")
-                if download_result.get("start_message_id"):
-                    text_print(f"Start Message ID: {download_result['start_message_id']}")
-                text_print(f"Download Directory: {download_result.get('download_root', display_path(download_result['download_dir']))}")
-                text_print(f"Manifest: {display_path(download_result['manifest_path'])}")
-                text_print(f"Text Log: {display_path(download_result['text_path'])}")
-                scan_label = "Message IDs Scanned" if download_result['download_mode_used'] == "idscan" else "Messages Scanned"
-                text_print(f"{scan_label}: {download_result['messages_scanned']}")
-                if download_result['download_mode_used'] == "idscan":
-                    text_print(f"Unavailable Message IDs: {download_result['unavailable_message_ids']}")
-                text_print(f"Messages Exported: {download_result['messages_exported']}")
-                text_print(f"Messages Filtered (Other/Unknown Chat): {download_result.get('messages_filtered', 0)}")
-                if download_result.get("messages_skipped_overwrite"):
-                    text_print(f"Messages Skipped (Overwrite Policy): {download_result['messages_skipped_overwrite']}")
-                if len(download_result.get("chat_exports", [])) > 1:
-                    for entry in download_result["chat_exports"]:
-                        text_print(f"Chat {entry['chat_id']}: exported={entry['messages_exported']}, directory={entry['download_dir']}")
-                if "scope_diagnostics" in download_result:
-                    text_print("Scope Diagnostic Counts: " + json.dumps(download_result["scope_diagnostics"]["counts"]))
-                if "recipient_map" in download_result:
-                    mapped = download_result["recipient_map"]["recipients"]
-                    text_print(f"Private Recipients Observed (Partial Map): {len(mapped)}")
-                    for recipient in mapped:
-                        text_print("Recipient: " + json.dumps(recipient))
-                text_print(f"Media Downloaded: {download_result['media_downloaded']}")
-                text_print(f"Media Reused: {download_result.get('media_reused', 0)}")
-                text_print(f"Media Failed: {download_result['media_failed']}")
             except Exception as error:
                 report["errors"].append(f"downloads error: {error}")
                 text_print(f"ATTENTION downloads error: {error}")
+            if download_result:
+                print_download_summary(download_result, args.download_scope)
 
     # Get Bot Info
     telegram_get_me_response = get_bot_info(telegram_token)
