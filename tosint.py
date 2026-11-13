@@ -6,11 +6,14 @@ import argparse
 import mimetypes
 import sys
 import hashlib
+import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
 TEXT_OUTPUT_ENABLED = True
 HTTP_TIMEOUT = (10, 30)
+KURIGRAM_SESSION_VERSION = 7
 DOWNLOADABLE_MEDIA_TYPES = frozenset({
     "photo", "video", "document", "audio", "voice", "video_note",
 })
@@ -376,7 +379,7 @@ def get_value(cli_value, env_values, env_key=None, prompt_text=None):
 
 def format_utc_datetime(value):
     if isinstance(value, datetime):
-        # Pyrofork uses local naive datetimes; astimezone applies the local
+        # Kurigram uses local naive datetimes; astimezone applies the local
         # offset for the message date, including daylight saving time.
         return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     return value
@@ -499,7 +502,32 @@ def build_scoped_session_name(cli_session_name, chat_id, bot_username=None, down
         return cli_session_name
     chat_segment = sanitize_path_segment(chat_id)
     bot_segment = sanitize_path_segment(bot_username) if bot_username else "unknown_bot"
-    return os.path.join("sessions", f"{bot_segment}_{chat_segment}", download_auth_mode)
+    return os.path.join("sessions", "kurigram", f"{bot_segment}_{chat_segment}", download_auth_mode)
+
+
+def check_session_format(session_name):
+    session_path = Path(f"{session_name}.session")
+    if not session_path.is_file():
+        return
+    try:
+        connection = sqlite3.connect(session_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)
+        try:
+            version = connection.execute("SELECT number FROM version").fetchone()
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(sessions)")}
+            usernames = {row[1] for row in connection.execute("PRAGMA table_info(usernames)")}
+        finally:
+            connection.close()
+    except sqlite3.Error as error:
+        raise RuntimeError(
+            f"Unable to inspect saved session {display_path(str(session_path))}: {error}"
+        ) from None
+    required = {"dc_id", "api_id", "auth_key", "user_id", "is_bot", "server_address", "port"}
+    if version != (KURIGRAM_SESSION_VERSION,) or not required <= columns or not {"id", "username"} <= usernames:
+        raise RuntimeError(
+            f"Incompatible saved session format: {display_path(str(session_path))}. "
+            "Use a new --session-name for Kurigram. Legacy Pyrofork sessions "
+            "are not converted or replaced."
+        )
 
 
 def should_confirm_overwrite(download_dir, output_stem):
@@ -879,9 +907,10 @@ def download_chat_content(
         from pyrogram.errors import SessionRevoked
     except ImportError as error:
         raise RuntimeError(
-            "Pyrofork is not installed. Run: pip install pyrofork"
+            "Kurigram is not installed. Run: python -m pip install -r requirements.txt"
         ) from error
 
+    check_session_format(session_name)
     session_dir = os.path.dirname(session_name)
     if session_dir:
         os.makedirs(session_dir, exist_ok=True)
@@ -918,6 +947,7 @@ def download_chat_content(
     client_kwargs = {
         "api_id": int(api_id),
         "api_hash": api_hash,
+        "workdir": os.getcwd(),
     }
     if download_auth_mode == "bot":
         client_kwargs["bot_token"] = bot_token_for_auth
@@ -1091,9 +1121,9 @@ def main():
     parser.add_argument('--json-file', type=str, help='Save analysis report as JSON file')
     parser.add_argument('--create-invite-link', action='store_true', help='Create an additional chat invite link (requires -c and appropriate bot administrator rights)')
     parser.add_argument('--downloads', '--download', action='store_true', help='Download Telegram chat history and media')
-    parser.add_argument('--api-id', type=str, help='Telegram API_ID for user session (Pyrofork)')
-    parser.add_argument('--api-hash', type=str, help='Telegram API_HASH for user session (Pyrofork)')
-    parser.add_argument('--session-name', type=str, default=None, help='Pyrofork session name/path override. By default: sessions/<bot>_<chat>/<bot|user>, based on --download-auth')
+    parser.add_argument('--api-id', type=str, help='Telegram API_ID for MTProto downloads (Kurigram)')
+    parser.add_argument('--api-hash', type=str, help='Telegram API_HASH for MTProto downloads (Kurigram)')
+    parser.add_argument('--session-name', type=str, default=None, help='Kurigram session name/path override. By default: sessions/kurigram/<bot>_<chat>/<bot|user>, based on --download-auth')
     parser.add_argument('--download-dir', type=str, default='downloads', help='Directory where messages/media are saved (default: downloads)')
     parser.add_argument('--download-overwrite', choices=['ask', 'always', 'never'], default='ask', help="How to handle today's existing export files: ask, always, or never (default: ask)")
     parser.add_argument('--download-limit', type=int, default=0, help='Max messages to export (0 = all)')

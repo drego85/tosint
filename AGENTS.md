@@ -4,7 +4,7 @@
 
 Tosint is a Python CLI for Telegram OSINT investigations. Bot API requests
 provide preliminary bot, chat, and administrator intelligence. Optional message
-and attachment acquisition uses Pyrofork through the `pyrogram` import namespace.
+and attachment acquisition uses Kurigram through the `pyrogram` import namespace.
 
 Read the relevant code, tests, and README before editing. Keep changes scoped
 to the request; do not combine bug fixes with unrelated refactors or dependency
@@ -56,10 +56,15 @@ failures are recorded separately and do not currently force a nonzero exit.
 
 Bot authentication is the download default and uses the CLI token. User
 authentication is explicit through `--download-auth user`. Keep default session
-paths separate: `sessions/<bot_username>_<chat_reference>/bot.session` and
+paths separate: `sessions/kurigram/<bot_username>_<chat_reference>/bot.session` and
 `user.session`. Do not delete or migrate existing sessions without approval.
+Legacy Pyrofork sessions are not reused or converted. Check custom session files
+in read-only mode before handing them to Kurigram; reject incompatible formats.
+The pinned Kurigram version uses SQLite schema version 7. Recheck schema and
+migration behavior before upgrading the library. User login uses the phone
+number flow; do not add QR login without an explicit request.
 
-Pyrofork's `bot_token` applies only to new sessions; it does not replace the
+Kurigram's `bot_token` applies only to new sessions; it does not replace the
 identity of an existing session. Never assume that passing a token reauthenticates
 a reused session, especially with a custom `--session-name`.
 Verify the authenticated identity before reading chat content or creating export
@@ -123,10 +128,10 @@ minimal human-readable log, omitting empty fields. Do not add a separate
 acquisition metadata file without a request. Preserve existing JSON field names
 unless a schema change is explicitly requested and documented.
 
-Pyrofork 2.3.69 returns naive local message datetimes. Convert them to actual UTC
+Kurigram 2.2.27 returns naive local message datetimes. Convert them to actual UTC
 for JSONL, including the historical daylight-saving offset; never simply attach
 UTC to a naive datetime. TXT dates include an explicit local offset. Recheck
-this assumption against library source when upgrading Pyrofork.
+this assumption against library source when upgrading Kurigram.
 
 Download only photos, videos, documents (including archives), audio, voice
 messages, and video notes. Stickers, animations/GIFs, link previews, dice, and
@@ -141,20 +146,20 @@ introduce automatic media retries, default hashing, or content execution.
 
 ## Documentation and Dependencies
 
-Use Context7 for Pyrofork, Requests, and Telegram API documentation when available.
+Use Context7 for Kurigram, Requests, and Telegram API documentation when available.
 Verify method semantics and labels against official documentation, and inspect
 the installed source when indexed documentation targets a different version.
 Do not send private code, tokens, or evidence to documentation services.
 
 Keep runtime dependencies pinned to tested versions. Do not install upstream
-`Pyrogram` alongside `pyrofork`: both use the `pyrogram` namespace. Dependency
+`Pyrogram` or `pyrofork` alongside `kurigram`: all use the `pyrogram` namespace. Dependency
 changes need their own compatibility checks; new versions are not automatic fixes.
 
 References:
 
 - Telegram Bot API: https://core.telegram.org/bots/api
 - Bot privacy behavior: https://core.telegram.org/bots/features#privacy-mode
-- Pyrofork client/session options: https://github.com/Mayuri-Chan/pyrofork/blob/main/docs/source/api/client.rst
+- Kurigram client/session options: https://github.com/kurigram-org/kurigram/blob/main/pyrogram/client.py
 
 ## Verification and Commits
 

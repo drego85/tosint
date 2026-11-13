@@ -52,7 +52,7 @@ class IDScanBatchTests(unittest.TestCase):
             yield app
 
         with tempfile.TemporaryDirectory() as directory, patch.dict("sys.modules", {"pyrogram": pyrogram, "pyrogram.errors": errors}), patch.object(tosint, "open_download_client", client):
-            result = tosint.download_chat_content(123, 1, "fake", "session", directory, limit,
+            result = tosint.download_chat_content(123, 1, "fake", str(Path(directory, "sessions", "bot")), directory, limit,
                 start_message_id=start, bot_token_for_auth="fake", download_auth_mode=auth,
                 batch_size=batch, progress_every=progress, expected_bot_id=123)
             rows = [json.loads(line) for line in Path(result["manifest_path"]).read_text().splitlines()]

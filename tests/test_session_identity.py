@@ -1,6 +1,8 @@
 import contextlib
 import io
 import json
+import os
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -42,6 +44,7 @@ class SessionIdentityTests(unittest.TestCase):
             self.assertEqual(result["messages_exported"], 1)
         self.app.start.assert_called_once()
         self.app.stop.assert_called_once()
+        self.assertEqual(self.client_factory.call_args.kwargs["workdir"], os.getcwd())
 
     def test_matching_user_session_does_not_require_the_bot_user_id(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -58,14 +61,20 @@ class SessionIdentityTests(unittest.TestCase):
         ):
             with self.subTest(auth=auth, identity=identity), tempfile.TemporaryDirectory() as directory:
                 session = Path(directory, "custom.session")
-                session.write_bytes(b"existing session")
+                with sqlite3.connect(session) as database:
+                    database.executescript(
+                        "CREATE TABLE version (number INTEGER); INSERT INTO version VALUES (7);"
+                        "CREATE TABLE sessions (dc_id, api_id, auth_key, user_id, is_bot, server_address, port);"
+                        "CREATE TABLE usernames (id, username);"
+                    )
+                previous_session = session.read_bytes()
                 export_dir = Path(directory, "export")
                 export_dir.mkdir()
                 previous = export_dir / "messages_example.jsonl"
                 previous.write_text("previous evidence")
                 with self.assertRaisesRegex(RuntimeError, "Session identity mismatch"):
                     self.download(directory, identity, auth=auth)
-                self.assertEqual(session.read_bytes(), b"existing session")
+                self.assertEqual(session.read_bytes(), previous_session)
                 self.assertEqual(previous.read_text(), "previous evidence")
                 self.assertEqual(list(export_dir.glob(".acquisition-*")), [])
                 self.app.get_chat.assert_not_called()

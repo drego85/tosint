@@ -45,7 +45,7 @@ class ExportSafetyTests(unittest.TestCase):
         with patch.dict("sys.modules", {"pyrogram": pyrogram, "pyrogram.errors": errors}), patch.object(
             tosint, "open_download_client", client
         ), patch.object(tosint, "text_print"):
-            return tosint.download_chat_content(123, 1, "fake", "session", directory, 0, **options)
+            return tosint.download_chat_content(123, 1, "fake", str(Path(directory, "sessions", "bot")), directory, 0, **options)
 
     def test_start_id_failure_does_not_truncate_previous_logs(self):
         with tempfile.TemporaryDirectory() as directory:

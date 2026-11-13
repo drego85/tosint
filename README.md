@@ -100,7 +100,7 @@ includes the source `chat_id`, UTC message/edit timestamps, reply message ID,
 per-message acquisition timestamp (`acquired_at`), original attachment name,
 MIME type, Telegram file size, file identifiers and downloaded file size in
 bytes. Unavailable fields are `null`; metadata is retained even when attachment
-downloads are skipped. Pyrofork's naive local timestamps are converted to UTC,
+downloads are skipped. Kurigram's naive local timestamps are converted to UTC,
 including the daylight saving offset applicable to the message date.
 TXT message dates use local time with an explicit UTC offset, for example
 `2026-09-30T12:40:35+02:00`.
@@ -130,6 +130,8 @@ available and the download is reported as interrupted.
 
 ## Installation
 
+Requires Python 3.10 or later. MTProto downloads use Kurigram, imported as `pyrogram`.
+
 1. Clone the repository:
 
 ```bash
@@ -146,6 +148,17 @@ python -m pip install -r requirements.txt
 ```
 
 `tgcrypto` is optional from a functional perspective, but strongly recommended for much faster MTProto upload/download performance.
+
+When upgrading from Pyrofork, remove the conflicting packages from your active
+virtual environment before installing the new requirements:
+
+```bash
+python -m pip uninstall -y pyrofork Pyrogram
+python -m pip install -r requirements.txt
+```
+
+Do not install Pyrofork or upstream Pyrogram alongside Kurigram: they share the
+same import namespace. Existing exports and media files remain usable.
 
 ## How to Get Telegram API_ID and API_HASH
 
@@ -270,7 +283,7 @@ acquired afresh on every run; only attachment transfers are deduplicated.
 ### Download authentication modes (`--download-auth`)
 
 - `bot` (default): uses the bot token provided with `-t/--token` for the download session.
-- `user`: forces user authentication and shows Pyrogram login prompt (phone number or QR code flow).
+- `user`: authenticates a personal account using Kurigram's phone-number login, verification code, and two-step verification password when enabled. QR login is not exposed by Tosint.
 
 To use a user account instead of the bot for downloading:
 
@@ -281,16 +294,18 @@ python3 tosint.py -t <TELEGRAM_BOT_TOKEN> -c <TELEGRAM_CHAT_ID> --download --dow
 By default, authentication modes use separate session files:
 
 ```text
-sessions/<bot_username>_<chat_id>/bot.session
-sessions/<bot_username>_<chat_id>/user.session
+sessions/kurigram/<bot_username>_<chat_reference>/bot.session
+sessions/kurigram/<bot_username>_<chat_reference>/user.session
 ```
 
-Previous `tosint_user.session` files are left unchanged; the first run with the
-new paths creates a fresh session. Bot authentication uses the CLI token, while
-user authentication requires login. If you override `--session-name`, choose
-distinct paths for bot and user authentication to keep their sessions separate.
+The chat reference is the ID or username supplied with `-c`. Previous Pyrofork
+sessions are left unchanged and are not converted. The first run creates a fresh
+Kurigram session: bot mode uses the CLI token automatically, while user mode
+requires login. If you override `--session-name`, choose a new path and keep bot
+and user sessions separate. Incompatible existing SQLite formats are rejected
+before Kurigram opens them; they are not modified or replaced.
 
-Before reading chat content, Tosint verifies the identity loaded by Pyrofork.
+Before reading chat content, Tosint verifies the identity loaded by Kurigram.
 Bot sessions must match the bot ID validated through the Bot API; user mode
 requires a user account rather than a bot. A mismatch stops the download without
 replacing the session or modifying existing exports. Select another
@@ -328,7 +343,7 @@ python3 tosint.py -t <TELEGRAM_BOT_TOKEN> -c <TELEGRAM_CHAT_ID> --downloads --do
 - `--downloads` (`--download` alias): download messages/media
 - `--api-id`: Telegram API ID (used by `--downloads`)
 - `--api-hash`: Telegram API hash (used by `--downloads`)
-- `--session-name`: Pyrofork session name/path override. If omitted, Tosint uses `sessions/<bot>_<chat>/bot` or `sessions/<bot>_<chat>/user`, according to `--download-auth`
+- `--session-name`: Kurigram session name/path override. Defaults to `sessions/kurigram/<bot>_<chat>/bot` or `sessions/kurigram/<bot>_<chat>/user`, according to `--download-auth`
 - `--download-dir`: target folder for downloaded content (default: `downloads`)
 - `--download-overwrite`: overwrite policy for today's export files: `ask`, `always`, or `never` (default: `ask`)
 - `--download-limit`: max messages to export (`0` = all; negative values are rejected)
