@@ -36,7 +36,7 @@ class DailyExportTests(unittest.TestCase):
                 self.assertTrue(tosint.should_confirm_overwrite(directory, self.stem))
                 target.unlink()
 
-    def run_cli(self, directory, policy, current_exists=False, answer="y"):
+    def run_cli(self, directory, policy, current_exists=False, answer="y", result_extra=None):
         target = Path(directory, "example_bot", "456")
         target.mkdir(parents=True)
         Path(target, "2026.11.11_messages_example.jsonl").write_text("Previous day")
@@ -59,6 +59,7 @@ class DailyExportTests(unittest.TestCase):
                   "text_path": str(target / f"{self.stem}.txt"), "messages_scanned": 1,
                   "unavailable_message_ids": 0, "messages_exported": 1,
                   "media_downloaded": 0, "media_failed": 0, "media_reused": 1}
+        result.update(result_extra or {})
         with patch.object(sys, "argv", [
             "tosint.py", "-t", "123:fake", "-c", "456", "--download", "--json",
             "--api-id", "1", "--api-hash", "fake", "--download-dir", directory,
@@ -93,6 +94,17 @@ class DailyExportTests(unittest.TestCase):
                 self.assertEqual(download.call_count, int(proceed))
                 self.assertEqual(prompt.call_count, int(prompted))
                 self.assertEqual(bool(report["errors"]), not proceed)
+
+    def test_additional_chat_skip_sets_failure_status_and_preserves_json_stdout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            status, report, download, _ = self.run_cli(directory, "never", result_extra={
+                "skipped_chats": [999], "messages_skipped_overwrite": 2,
+            })
+            self.assertEqual(status, 1)
+            self.assertEqual(report["downloads"]["skipped_chats"], [999])
+            self.assertEqual(len(report["errors"]), 1)
+            self.assertEqual(download.call_args.kwargs["download_scope"], "token")
+            self.assertEqual(download.call_args.kwargs["overwrite_policy"], "never")
 
 
 if __name__ == "__main__":

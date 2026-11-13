@@ -78,15 +78,21 @@ missing messages must not discard valid messages from the same batch.
 Resolve username targets to a numeric chat ID before acquisition. Verify each
 dated message's actual `message.chat.id` before exporting text, reusing or
 downloading media, or hashing files. Never infer the dialog from the sender or
-substitute the requested ID when the message's own chat ID is missing. Filter
-other/unknown chats, count them separately, and do not consume the export limit.
+substitute the requested ID when the message's own chat ID is missing.
+`--download-scope token` is the bot default: route messages to separate exports
+using their actual numeric chat IDs. `chatid` filters other chats and is the
+default and only supported scope for user authentication. Unknown/invalid chat
+IDs are always filtered and do not consume the export limit. The limit counts
+unique exported messages across all included chats. Deduplicate by chat and
+message ID, not message ID alone.
 Private chats and basic groups share account-wide message IDs; passing a chat
 to `get_messages` does not by itself scope `messages.GetMessages` responses.
-Only explicit `--map-recipients` may aggregate other private destination IDs.
+Explicit `--map-recipients` additionally aggregates private destination IDs.
 It requires bot authentication, records only observed outgoing messages from the
 verified bot, and stores counts and UTC date ranges in the analysis report.
-Never include other conversations' content or attachments in the requested
-chat's logs, or make extra lookups to enrich this partial recipient map.
+Never mix different conversations' content or attachments in one chat's logs,
+or make extra lookups to enrich this partial recipient map. Token scope covers
+only encountered messages, not a complete enumeration of the bot's chats.
 After a partial history retrieval failure, scan below the oldest exported ID
 and deduplicate within the current run. Export limits count unique messages.
 Do not use history fallback to handle export write failures.
@@ -124,6 +130,10 @@ creating `.acquisition-*` directories. Preserve other days and legacy undated
 logs. The overwrite policy checks only today's target logs, not the presence
 of the chat directory. Same-day logs may be overwritten or left partial after
 failure or interruption; this is intentional. Do not delete older acquisitions.
+Additional chat exports in token scope must honor the same overwrite policy
+when first encountered. A refused/never overwrite skips that additional chat,
+is reported separately, and does not consume the export limit. Do not keep an
+unbounded number of file handles open. Keep media caches isolated by chat.
 
 Keep one shared `media/` directory per chat. Load media references from that
 chat's previous JSONL exports before truncating today's logs. Reuse attachments

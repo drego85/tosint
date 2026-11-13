@@ -11,6 +11,24 @@ import tosint
 
 
 class CLIValidationTests(unittest.TestCase):
+    def test_download_scope_defaults_follow_authentication(self):
+        for options, expected in (([], "token"), (["--download-auth", "user"], "chatid"),
+                                  (["--download-scope", "chatid"], "chatid")):
+            with self.subTest(options=options), patch.object(sys, "argv", ["tosint.py", "-t", "fake", *options]), patch.object(
+                tosint, "run_analysis"
+            ) as analysis:
+                self.assertEqual(tosint.main(), 0)
+                self.assertEqual(analysis.call_args.args[0].download_scope, expected)
+
+    def test_user_authentication_rejects_token_scope_before_analysis(self):
+        with patch.object(sys, "argv", ["tosint.py", "-t", "fake", "--download-auth", "user", "--download-scope", "token"]), patch.object(
+            tosint, "run_analysis"
+        ) as analysis, contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as caught:
+                tosint.main()
+        self.assertEqual(caught.exception.code, 2)
+        analysis.assert_not_called()
+
     def test_recipient_mapping_requires_download_and_bot_auth_before_analysis(self):
         for options in (["--map-recipients"], ["--download", "-c", "456", "--map-recipients", "--download-auth", "user"]):
             with self.subTest(options=options), patch.object(sys, "argv", ["tosint.py", "-t", "fake", *options]), patch.object(

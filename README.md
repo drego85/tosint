@@ -226,6 +226,22 @@ python3 tosint.py -t <TELEGRAM_BOT_TOKEN> -c <TELEGRAM_CHAT_ID> --downloads
 ```
 
 The default `--download-mode auto` uses ID scan with bot authentication.
+Bot authentication defaults to `--download-scope token`: messages from other
+chats encountered during the scan are also exported, each under its actual chat
+ID with separate logs and media. Here `-c` supplies the initial chat used to
+derive a starting message ID, not a filter. To export only that chat, use:
+
+```bash
+python3 tosint.py -t <TELEGRAM_BOT_TOKEN> -c <TELEGRAM_CHAT_ID> --download --download-scope chatid
+```
+
+User authentication defaults to `chatid` and rejects scope `token`. Scope controls
+which returned messages are saved, not which identity authenticates. `token`
+does not enumerate every conversation: only available messages encountered in
+the selected scan are included. Channel/supergroup requests have their own ID
+sequence; they do not scan the bot's private conversations. History mode is
+likewise limited to the history requested from Telegram.
+
 With user authentication, it tries chat history first and falls back to ID
 scan if history fails.
 If history retrieval fails after exporting messages, ID scan continues below
@@ -256,21 +272,29 @@ with `--download-batch-size <1-200>`. Missing or deleted IDs are skipped without
 discarding the other messages in the batch. Exports remain ordered from newest
 to oldest; `ids_scanned` counts processed IDs, `unavailable_ids` counts IDs for
 which no dated message was returned, and `exported` counts exported messages.
-Before writing logs or accessing attachments, Tosint verifies that each dated
-message's actual `chat.id` matches the resolved numeric target ID. Messages from
-other chats or without a verifiable chat ID are skipped and counted separately
-as `filtered` in progress output and `messages_filtered` in the JSON report.
-They do not count toward `--download-limit` or attachment failures.
+Before writing logs or accessing attachments, Tosint verifies each dated
+message's actual numeric `chat.id`. In scope `token`, messages are routed to
+that chat's directory; no extra metadata lookups are performed. Additional
+chats use their parsed title, or chat ID when no title is available, for filenames.
+In scope `chatid`, other chats are excluded. Missing/invalid chat IDs are always
+excluded. Exclusions are counted as `filtered` in progress output and
+`messages_filtered` in the JSON report, not as attachment failures.
+`--download-limit` counts unique messages exported across all included chats;
+filtered messages and messages skipped by the overwrite policy do not consume it.
+The JSON download report includes `download_scope`, `download_root` and
+`chat_exports` with paths and message/media counts per chat. Existing top-level
+`download_dir`, `manifest_path` and `text_path` still refer to the initial chat.
 If the entire request fails, the error is reported rather than silently skipping
 the batch. `--download-limit` still limits the number of messages exported.
 
 Private chats and basic groups share a message ID sequence for the account,
 unlike channels and supergroups. A high starting ID therefore does not measure
 the size of one private conversation: full ID scans may still require many
-requests and FloodWait pauses, even when most returned messages are filtered.
+requests and FloodWait pauses, even when most returned messages belong to other chats.
 Earlier exports are not automatically repaired or cleaned by this validation.
 
-To investigate unexpected filtering, add `--download-debug-scope`. It displays
+To investigate unexpected filtering, add `--download-debug-scope` (and select
+`--download-scope chatid` to inspect other-chat exclusions). It displays
 up to 10 filtered-message samples containing only numeric IDs and message
 direction, plus counts for missing chat IDs (`unknown_chat`), chat IDs matching
 the authenticated account (`authenticated_peer`), and other IDs (`different_chat`).
@@ -291,13 +315,14 @@ Each recipient has a unique observed-message count and earliest/latest message
 dates in UTC. No names, message text or attachment details are stored in the map.
 
 ```bash
-python3 tosint.py -t <BOT_TOKEN> -c <CHAT_ID> --download --map-recipients --json-file report.json
+python3 tosint.py -t <BOT_TOKEN> -c <CHAT_ID> --download --download-scope chatid --map-recipients --json-file report.json
 ```
 
 The map appears in the final console summary and in `downloads.recipient_map` in
 the analysis JSON report. Use `--json-file` to keep it; no separate mapping file
-is created automatically. TXT/JSONL message logs still contain only the requested
-chat, and other conversations' attachments are not downloaded. Mapping makes no
+is created automatically. With scope `chatid` as above, logs and attachments
+include only the requested chat. With scope `token`, each encountered chat is
+exported separately regardless of whether mapping is enabled. Mapping makes no
 additional API requests and does not change the export limit or scan range.
 In history mode only that history is observed; ID scan can encounter other chats.
 The result is always a partial observation, not a complete recipient directory:
@@ -365,6 +390,14 @@ The download JSON report records `authenticated_user_id` and
 - `always`: overwrite today's export files without prompting.
 - `never`: skip the download if today's export files already exist.
 
+The initial chat is checked before acquisition as before: refusing its overwrite
+stops the download. In scope `token`, additional chats are checked when first
+encountered. Refusing one, reaching EOF at its prompt, or using `never` skips that
+chat while acquisition continues for others. Skipped chat IDs and message counts
+are reported; the CLI exits with failure status if any chat was skipped. Prompts
+use stderr with `--json`, preserving machine-readable stdout. For unattended
+runs select `always` or `never` explicitly.
+
 Exports from other dates and legacy undated logs are preserved. An existing chat
 directory alone does not trigger the overwrite policy. Repeating an export on
 the same day replaces that day's logs rather than creating another snapshot.
@@ -395,6 +428,7 @@ python3 tosint.py -t <TELEGRAM_BOT_TOKEN> -c <TELEGRAM_CHAT_ID> --downloads --do
 - `--download-limit`: max messages to export (`0` = all; negative values are rejected)
 - `--download-mode`: `auto`, `history`, `idscan` (default: `auto`)
 - `--download-auth`: `bot`, `user` (default: `bot`)
+- `--download-scope`: `token` exports encountered chats separately (bot default); `chatid` exports only `-c` (user default and only supported user scope)
 - `--download-start-id`: positive start `message_id` for `idscan` mode (`0` and negative values are rejected)
 - `--download-progress-every`: print progress every N scanned IDs or history messages (`0` disables, default: `50`)
 - `--download-batch-size`: IDs per request in `idscan` mode (`1` to `200`, default: `50`; ignored in `history` mode)

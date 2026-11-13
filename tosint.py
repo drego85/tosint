@@ -535,6 +535,17 @@ def should_confirm_overwrite(download_dir, output_stem):
                for extension in ("jsonl", "txt"))
 
 
+def confirm_export_overwrite():
+    prompt = "Do you want to overwrite today's exported files? (y/N): "
+    try:
+        if TEXT_OUTPUT_ENABLED:
+            return input(prompt).strip().lower() == "y"
+        print(prompt, end="", file=sys.stderr, flush=True)
+        return input().strip().lower() == "y"
+    except EOFError:
+        return False
+
+
 def display_path(path_value):
     try:
         return os.path.relpath(path_value, os.getcwd())
@@ -960,7 +971,9 @@ def download_chat_content(
     hash_media=False,
     expected_bot_id=None,
     debug_scope=False,
-    map_recipients=False
+    map_recipients=False,
+    download_scope=None,
+    overwrite_policy="ask"
 ):
     if not 1 <= batch_size <= 200:
         raise ValueError("Download batch size must be between 1 and 200.")
@@ -971,6 +984,13 @@ def download_chat_content(
     acquisition_date = datetime.now().date()
     if download_auth_mode not in ("bot", "user"):
         raise ValueError("Download authentication mode must be bot or user.")
+    download_scope = download_scope or ("token" if download_auth_mode == "bot" else "chatid")
+    if download_scope not in ("token", "chatid"):
+        raise ValueError("Download scope must be token or chatid.")
+    if download_scope == "token" and download_auth_mode != "bot":
+        raise ValueError("Token download scope requires bot authentication.")
+    if overwrite_policy not in ("ask", "always", "never"):
+        raise ValueError("Download overwrite policy must be ask, always, or never.")
     if map_recipients and download_auth_mode != "bot":
         raise ValueError("Recipient mapping requires bot authentication.")
     if download_auth_mode == "bot":
@@ -997,11 +1017,13 @@ def download_chat_content(
         "chat_id": str(chat_id),
         "session_name": session_name,
         "download_dir": display_path(download_dir),
+        "download_root": display_path(os.path.dirname(os.path.abspath(download_dir))) if download_scope == "token" else display_path(download_dir),
         "history_limit": history_limit,
         "batch_size": batch_size,
         "hash_media": hash_media,
         "download_mode_requested": download_mode,
         "download_mode_used": None,
+        "download_scope": download_scope,
         "start_message_id": start_message_id,
         "chat_title": None,
         "chat_type": None,
@@ -1009,6 +1031,9 @@ def download_chat_content(
         "unavailable_message_ids": 0,
         "messages_exported": 0,
         "messages_filtered": 0,
+        "messages_skipped_overwrite": 0,
+        "skipped_chats": [],
+        "chat_exports": [],
         "media_downloaded": 0,
         "media_reused": 0,
         "media_failed": 0,
@@ -1075,12 +1100,13 @@ def download_chat_content(
                     if result["download_mode_used"] == "idscan" else ""
                 )
                 recipients_part = f", recipients={len(recipients)}" if map_recipients else ""
+                skipped_part = f", skipped_overwrite={result['messages_skipped_overwrite']}" if result["messages_skipped_overwrite"] else ""
                 text_print(
                     f"[DOWNLOAD] Progress: {scan_label}={result['messages_scanned']}{unavailable_part}, "
                     f"exported={result['messages_exported']}, filtered={result['messages_filtered']}, "
                     f"media={result['media_downloaded']}, "
                     f"media_reused={result['media_reused']}, "
-                    f"media_failed={result['media_failed']}{recipients_part}{current_id_part}"
+                    f"media_failed={result['media_failed']}{recipients_part}{skipped_part}{current_id_part}"
                 )
                 last_progress_scanned = scanned
 
@@ -1112,19 +1138,73 @@ def download_chat_content(
 
             with open_message_export(download_dir, effective_stem, result) as (manifest_file, text_file):
                 exported_ids = set()
+                counter_keys = ("messages_exported", "media_downloaded", "media_reused", "media_failed")
+
+                def export_record(destination, directory, manifest_path, text_path):
+                    entry = {"chat_id": destination, "download_dir": display_path(directory),
+                             "manifest_path": manifest_path, "text_path": text_path}
+                    entry.update(dict.fromkeys(counter_keys, 0))
+                    result["chat_exports"].append(entry)
+                    return entry
+
+                primary_entry = export_record(chat_peer, download_dir, result["manifest_path"], result["text_path"])
+                other_exports = {}
+
+                def write_message(message, destination, directory, manifest, text, index, entry):
+                    before = {key: result[key] for key in counter_keys}
+                    if process_download_message(
+                        message, app, destination, directory, manifest, text, result,
+                        skip_media=skip_media, hash_media=hash_media, media_index=index
+                    ):
+                        exported_ids.add((destination, message.id))
+                    for key in counter_keys:
+                        entry[key] += result[key] - before[key]
+
+                def export_other_chat(message, destination):
+                    if destination not in other_exports:
+                        directory = os.path.join(os.path.dirname(os.path.abspath(download_dir)), str(destination))
+                        title = getattr(getattr(message, "chat", None), "title", None)
+                        stem = build_daily_messages_stem(title, destination, acquisition_date)
+                        if should_confirm_overwrite(directory, stem):
+                            text_print(f"ATTENTION Today's export already exists in: {display_path(directory)}")
+                            if overwrite_policy == "never" or (overwrite_policy == "ask" and not confirm_export_overwrite()):
+                                other_exports[destination] = None
+                                result["skipped_chats"].append(destination)
+                                result["errors"].append(f"Export skipped for chat {destination}: today's files were not approved for overwrite.")
+                        if destination not in other_exports:
+                            os.makedirs(directory, exist_ok=True)
+                            index = {} if skip_media else load_media_reuse_index(directory, destination, result["errors"])
+                            paths = {}
+                            with open_message_export(directory, stem, paths) as (manifest, text):
+                                entry = export_record(destination, directory, paths["manifest_path"], paths["text_path"])
+                                other_exports[destination] = (directory, index, entry)
+                                text_print(f"[DOWNLOAD] Chat export: {display_path(directory)}")
+                                write_message(message, destination, directory, manifest, text, index, entry)
+                            return
+                    state = other_exports[destination]
+                    if state is None:
+                        result["messages_skipped_overwrite"] += 1
+                        return
+                    directory, index, entry = state
+                    # Only the primary log pair stays open across messages. This
+                    # bounds open file handles even when many chats are found.
+                    with open(entry["manifest_path"], "a", encoding="utf-8") as manifest, open(
+                        entry["text_path"], "a", encoding="utf-8"
+                    ) as text:
+                        write_message(message, destination, directory, manifest, text, index, entry)
 
                 def export_message(message):
                     if map_recipients:
                         record_recipient(message, identity.id, recipients, recipient_message_ids)
                     message_id = getattr(message, "id", None)
-                    if message_id in exported_ids and message_matches_chat(message, chat_peer):
+                    destination = getattr(getattr(message, "chat", None), "id", None)
+                    if type(destination) is int and (destination, message_id) in exported_ids:
                         return
-                    if process_download_message(
-                        message, app, chat_peer, download_dir, manifest_file,
-                        text_file, result, skip_media=skip_media, hash_media=hash_media,
-                        media_index=media_index
-                    ):
-                        exported_ids.add(message_id)
+                    if (download_scope == "token" and type(destination) is int and destination != 0
+                            and destination != chat_peer and getattr(message, "date", None)):
+                        export_other_chat(message, destination)
+                    else:
+                        write_message(message, chat_peer, download_dir, manifest_file, text_file, media_index, primary_entry)
 
                 def run_history_download():
                     # Enforce the export limit after chat validation, not on raw results.
@@ -1199,7 +1279,7 @@ def download_chat_content(
                         if exported_ids:
                             # History is newest-first: continue below the oldest
                             # exported ID without posting a new probe message.
-                            next_id = min(exported_ids) - 1
+                            next_id = min(message_id for _, message_id in exported_ids) - 1
                             if start_message_id is not None:
                                 next_id = min(next_id, start_message_id)
                             result["start_message_id"] = next_id
@@ -1235,6 +1315,7 @@ def main():
     parser.add_argument('--download-limit', type=int, default=0, help='Max messages to export (0 = all)')
     parser.add_argument('--download-mode', type=str, choices=['auto', 'history', 'idscan'], default='auto', help='Download strategy: auto (bot: idscan; user: history with idscan fallback), history, or idscan')
     parser.add_argument('--download-auth', type=str, choices=['bot', 'user'], default='bot', help='Download auth mode: bot (default, uses -t token) or user (interactive login)')
+    parser.add_argument('--download-scope', choices=['token', 'chatid'], default=None, help='Export encountered chats separately (token, default for bot) or only -c (chatid, default and only scope for user)')
     parser.add_argument('--download-start-id', type=int, help='Start message_id for idscan mode (latest known message id)')
     parser.add_argument('--download-progress-every', type=int, default=50, help='Print download progress every N scanned messages (0 disables)')
     parser.add_argument('--download-batch-size', type=int, default=50, help='Message IDs per idscan request, from 1 to 200 (default: 50)')
@@ -1257,6 +1338,9 @@ def main():
         parser.error('-t/--token must not be empty')
     if args.map_recipients and (not args.downloads or args.download_auth != "bot"):
         parser.error('--map-recipients requires --download and --download-auth bot')
+    if args.download_scope == "token" and args.download_auth != "bot":
+        parser.error('--download-scope token requires --download-auth bot')
+    args.download_scope = args.download_scope or ("token" if args.download_auth == "bot" else "chatid")
     if (args.downloads or args.create_invite_link) and not (args.chat_id and args.chat_id.strip()):
         parser.error('--downloads and --create-invite-link require -c/--chat_id')
 
@@ -1346,8 +1430,7 @@ def run_analysis(args, report):
                 report["errors"].append("download skipped because today's export already existed and overwrite policy was set to never")
                 return
             if args.download_overwrite == "ask":
-                confirmation = input("Do you want to overwrite today's exported files? (y/N): ").strip().lower()
-                if confirmation != "y":
+                if not confirm_export_overwrite():
                     text_print("Download phase skipped by user.")
                     report["errors"].append("download skipped by user because today's export already existed")
                     return
@@ -1356,8 +1439,10 @@ def run_analysis(args, report):
         text_print("Starting requested download phase...")
         text_print(f"Requested Mode: {args.download_mode}")
         text_print(f"Auth Mode: {resolved_download_auth}")
+        text_print(f"Download Scope: {args.download_scope}")
         text_print(f"Session: {display_path(session_name)}")
-        text_print(f"Output Directory: {display_path(target_download_dir)}")
+        output_directory = os.path.dirname(os.path.abspath(target_download_dir)) if args.download_scope == "token" else target_download_dir
+        text_print(f"Output Directory: {display_path(output_directory)}")
         if args.skip_media_download:
             text_print("Media download is disabled (--skip-media-download).")
 
@@ -1397,18 +1482,23 @@ def run_analysis(args, report):
                     hash_media=args.hash_media,
                     expected_bot_id=telegram_get_me["id"],
                     debug_scope=args.download_debug_scope,
-                    map_recipients=args.map_recipients
+                    map_recipients=args.map_recipients,
+                    download_scope=args.download_scope,
+                    overwrite_policy=args.download_overwrite
                 )
                 report["downloads"] = download_result
+                if download_result.get("skipped_chats"):
+                    report["errors"].append("Some chat exports were skipped because today's files were not approved for overwrite.")
                 if download_result.get("interrupted"):
                     text_print("\n[DOWNLOAD] Interrupted by user")
                 else:
                     text_print("\n[DOWNLOAD] Completed")
                 text_print(f"Requested Mode: {download_result['download_mode_requested']}")
                 text_print(f"Used Mode: {download_result['download_mode_used']}")
+                text_print(f"Download Scope: {download_result.get('download_scope', args.download_scope)}")
                 if download_result.get("start_message_id"):
                     text_print(f"Start Message ID: {download_result['start_message_id']}")
-                text_print(f"Download Directory: {display_path(download_result['download_dir'])}")
+                text_print(f"Download Directory: {download_result.get('download_root', display_path(download_result['download_dir']))}")
                 text_print(f"Manifest: {display_path(download_result['manifest_path'])}")
                 text_print(f"Text Log: {display_path(download_result['text_path'])}")
                 scan_label = "Message IDs Scanned" if download_result['download_mode_used'] == "idscan" else "Messages Scanned"
@@ -1417,6 +1507,11 @@ def run_analysis(args, report):
                     text_print(f"Unavailable Message IDs: {download_result['unavailable_message_ids']}")
                 text_print(f"Messages Exported: {download_result['messages_exported']}")
                 text_print(f"Messages Filtered (Other/Unknown Chat): {download_result.get('messages_filtered', 0)}")
+                if download_result.get("messages_skipped_overwrite"):
+                    text_print(f"Messages Skipped (Overwrite Policy): {download_result['messages_skipped_overwrite']}")
+                if len(download_result.get("chat_exports", [])) > 1:
+                    for entry in download_result["chat_exports"]:
+                        text_print(f"Chat {entry['chat_id']}: exported={entry['messages_exported']}, directory={entry['download_dir']}")
                 if "scope_diagnostics" in download_result:
                     text_print("Scope Diagnostic Counts: " + json.dumps(download_result["scope_diagnostics"]["counts"]))
                 if "recipient_map" in download_result:
